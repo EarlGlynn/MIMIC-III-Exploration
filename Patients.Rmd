@@ -1,0 +1,310 @@
+---
+title: "MIMIC-III Patients Table"
+output:
+  html_document:
+    toc: yes
+    number_sections: true  
+  html_notebook:
+    toc: yes
+---
+
+efg | 2018-12-30
+
+According to [schema](https://mit-lcp.github.io/mimic-schema-spy/tables/patients.html) these tables are children of the patients table:
+
+* admissions
+* callout
+* chartevents
+* cptevents
+* datetimeevents
+* diagnoses_icd
+* drgcodes
+* icustays
+* inputevents_cv
+* inputevents_mv
+* labevents
+* microbiologyevents
+* noteevents
+* outputevents
+* prescriptions
+* procedureevents_mv
+* procedures_icd
+* services
+* transfers  
+
+NOTE:  At this time neither RPostgreSQL nor Rpostgres package works correctly with dates in all cases.
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(cli.unicode = FALSE)
+time.1 <- Sys.time()
+```
+
+## Packages 
+
+```{r, comment=NA}
+library(DBI)
+library(RPostgres)
+library(tidyverse)
+library(dbplyr, warn.conflicts=FALSE)
+library(kableExtra)
+library(ggplot2)
+```
+
+## Helper function
+
+```{r}
+Show <- function(data)
+{
+  data            %>%
+  kable("html")   %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"),
+                position = "left", full_width = FALSE)
+}
+```
+
+## Open database
+
+```{r}
+MimicDB <- dbConnect(RPostgres::Postgres(), 
+                     dbname   = "mimic",
+                     user     = Sys.getenv("MIMIC_User"),
+                     password = Sys.getenv("MIMIC_Password"),
+                     options  = "-c search_path=mimiciii")
+
+plotCaptionLeft  <- "MIMIC-III v1.4"
+plotCaptionRight <- paste("efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+# List of fields in a patients table
+
+```{r, comment=NA}
+dbListFields(MimicDB, "patients")
+```
+
+# Sample patients
+
+```{r, comment=NA}
+patients <- tbl(MimicDB, in_schema("mimiciii", "patients"))
+
+patients         %>% 
+  head(10)        %>%
+  Show()
+```
+
+# Record count
+
+```{r}
+patients             %>%
+  summarize(n = n()) %>%
+  Show()
+```
+
+# Fields
+
+## row_id
+
+```{r}
+patients                                         %>%
+  summarize(minRowID = min(row_id, na.rm=TRUE),
+            maxRowID = max(row_id, na.rm=TRUE))  %>%
+  collect()                                      %>%
+  Show()
+```
+
+## subject_id
+
+```{r}
+patients                                                 %>%
+  summarize(minSubjectID = min(subject_id, na.rm=TRUE),
+            maxSubjectID = max(subject_id, na.rm=TRUE))  %>%
+  Show()
+```
+
+There are two groups of `subject _id` ranges.
+
+```{r}
+patients                %>% 
+  select(subject_id)    %>% 
+  collect               %>% 
+  ggplot(aes(x=subject_id))                                 +
+  geom_histogram(fill="cornsilk", color="grey80", bins=100) +
+  labs(title = "Different ranges of MIMIC-III subject_ids",
+       caption=c(plotCaptionLeft, plotCaptionRight))        +
+  theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+```
+
+## gender
+
+```{r}
+patients            %>%
+  group_by(gender)  %>%
+  count()           %>%
+  Show()
+```
+
+## dob (date of birth) counts
+
+```{r}
+dobByYearMonth <-
+  patients                                 %>%
+  mutate(Year  = date_part("year",  dob),
+         Month = date_part("month", dob))  %>%
+  select(Year, Month)                      %>%
+  group_by(Year, Month)                    %>%
+  count()  %>%
+  ungroup()                                %>%
+  collect()                                %>%
+  mutate(n = as.numeric(n))                %>% # force from int64 to double
+  arrange(Year, Month)                     %>%
+  spread(Month, n, fill=0)
+```
+
+Counts of MIMIC-III dates of birth (dob) by year and month
+
+```{r}
+dobByYearMonth                     %>%
+  Show()                           %>%
+  scroll_box(height = "500px")
+```
+
+The expectation is the distribution by year and month should be fairly random.
+
+`dob` spreads over years 1800 to 1901 and 2012 to 2201 as part of deindentification process.
+
+## expire_flag
+
+```{r}
+patients                                                 %>%
+  group_by(expire_flag)                                  %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## dod (date of death) counts
+
+```{r}
+dodByYearMonth <-
+  patients                                 %>%
+  filter(expire_flag == 1)                 %>%
+  mutate(Year  = date_part("year",  dod),
+         Month = date_part("month", dod))  %>%
+  select(Year, Month)                      %>%
+  group_by(Year, Month)                    %>%
+  count()                                  %>%
+  ungroup()                                %>%
+  collect()                                %>%
+  mutate(n = as.numeric(n))                %>% # force from int64 to double
+  arrange(Year, Month)                     %>%
+  spread(Month, n, fill=0)
+```
+
+Counts of MIMIC-III dates of death (dod) by year and month
+
+```{r}
+dodByYearMonth                 %>%
+  Show()                       %>%
+  scroll_box(height = "500px")
+```
+
+Patients who died have `dod` dates of death in the year 2100 and after.
+
+The expectation is the distribution by year and month should be fairly random.
+
+## dod_hosp and dod_ssn
+
+```{r}
+patients                                   %>%
+  filter(expire_flag == 1)                 %>%
+  collect()                                %>%
+  summarize(dodNA      = sum(is.na(dod),      na.rm=TRUE),
+            dodHospNA  = sum(is.na(dod_hosp), na.rm=TRUE),
+            dodSsnNA   = sum(is.na(dod_ssn),  na.rm=TRUE))  %>%
+  Show()
+```
+
+So, `dod` is not an NA when `expire_flag` is 1, but many of the `dod_hosp` and `dod_ssn` values are NAs.
+
+## Computed:  Age at Death [INCORRECT results with RPostgres]
+
+```{r}
+facetLabels <- c(`F` = "Female",
+                 `M` = "Male")
+```
+
+```{r, fig.width=8, fig.height=6}
+patients                                      %>%
+  filter(expire_flag == 1)                    %>%
+  select(-dod_hosp, -dod_ssn, -expire_flag)   %>%
+  collect()                                   %>%
+  mutate(AgeAtDeathYears = as.double(dod - dob)/ (86400 * 365.25) )  %>%
+  
+  ggplot(aes(x = AgeAtDeathYears, y = ..density..))             +
+    geom_histogram(fill="cornsilk", color="grey80", binwidth=1) +
+    geom_density()                                              +
+    facet_grid(gender ~ ., labeller = as_labeller(facetLabels)) +
+    labs(title="MIMIC-III Age at Death [Years] by Gender",
+         x = "Age at Death [Years]",                        
+         caption=c(plotCaptionLeft, plotCaptionRight))          +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+```
+
+# Close database
+
+```{r, comment=NA}
+dbDisconnect(MimicDB)
+```
+
+# Use RPostgreSQL package 
+
+RPostgres package does not work correctly with dates before 1970 (fix expected in Feb. 2019).  RPostgreSQL handles dates before 1970, but sometimes truncates datetime stamps to dates, which leads to other problems.
+
+## Computed:  Age at Death [CORRECT results with RPostgreSQL]
+
+```{r, comment=NA}
+MimicDB <- dbConnect(RPostgreSQL::PostgreSQL(), 
+                     dbname   = "mimic",
+                     user     = Sys.getenv("MIMIC_User"),
+                     password = Sys.getenv("MIMIC_Password"),
+                     options  = "-c search_path=mimiciii")
+```
+
+```{r, comment=NA}
+patients <- tbl(MimicDB, in_schema("mimiciii", "patients"))
+```
+
+```{r, fig.width=8, fig.height=6}
+patients                                      %>%
+  filter(expire_flag == 1)                    %>%
+  select(-dod_hosp, -dod_ssn, -expire_flag)   %>%
+  collect()                                   %>%
+  mutate(AgeAtDeathYears = as.double(dod - dob)/ (86400 * 365.25) )  %>%
+  
+  ggplot(aes(x = AgeAtDeathYears, y = ..density..))             +
+    geom_histogram(fill="cornsilk", color="grey80", binwidth=1) +
+    geom_density()                                              +
+    facet_grid(gender ~ ., labeller = as_labeller(facetLabels)) +
+    labs(title="MIMIC-III Age at Death [Years] by Gender",
+         x = "Age at Death [Years]",                        
+         caption=c(plotCaptionLeft, plotCaptionRight))          +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+```
+
+```{r, comment=NA}
+dbDisconnect(MimicDB)
+```
+
+*****
+
+```{r, comment=NA, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", 
+                        sprintf("%.1f",
+                                as.numeric(difftime(time.2, time.1,
+                                                    units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`

@@ -1,0 +1,458 @@
+---
+title: "MIMIC-III Admissions Table"
+output:
+  html_document:
+    toc: yes
+    number_sections: true  
+  html_notebook:
+    toc: yes
+---
+
+efg | 2018-12-30
+
+NOTES:  
+
+* RPostgreSQL works fine with dates before 1970, but seems to truncate datetime timestamps to dates, and does not compute time intervals correctly.
+
+* Rpostgres does NOT work with dates before 1970 (*fix expected in Feb. 2019*), but computes time intervals below correctly.
+
+See info about `admissions` table in [online schema](https://mit-lcp.github.io/mimic-schema-spy/tables/admissions.html).
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(cli.unicode = FALSE)
+time.1 <- Sys.time()
+```
+
+## Packages
+
+```{r, comment=NA}
+library(DBI)
+library(RPostgres)   # be cautious with Postgres dates before 1970
+library(tidyverse)
+library(dbplyr, warn.conflicts=FALSE)
+library(kableExtra)
+library(ggplot2)
+library(writexl)
+```
+
+## Helper function
+
+```{r}
+Show <- function(data)
+{
+  data            %>%
+  kable("html")   %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"),
+                position = "left", full_width = FALSE)
+}
+```
+
+## Open database
+
+```{r}
+MimicDB <- dbConnect(RPostgres::Postgres(), 
+                     dbname   = "mimic",
+                     user     = Sys.getenv("MIMIC_User"),
+                     password = Sys.getenv("MIMIC_Password"),
+                     options  = "-c search_path=mimiciii")
+
+plotCaptionLeft  <- "MIMIC-III v1.4"
+plotCaptionRight <- paste("efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+# List tables in database
+
+This works with RPostgres but not RPostgreSQL.
+
+```{r, comment=NA}
+dbListTables(MimicDB)
+```
+
+# List of fields in admissions table
+
+```{r, comment=NA}
+dbListFields(MimicDB, "admissions")
+```
+
+# Admissions table record count
+
+tbl - create a table from a data source
+
+in_schema - refer to a table in a schema.  Here schema is "mimiciii" and table is "admissions".
+
+```{r}
+admissions <- tbl(MimicDB, in_schema("mimiciii", "admissions"))
+```
+
+```{r}
+admissions           %>%
+  summarize(n = n()) %>%
+  Show()
+```
+
+# Sample admissions records
+
+```{r, comment=NA}
+admissions   %>%
+  head(5)    %>%
+  Show()
+```
+
+# Fields
+
+## row_id
+
+```{r}
+admissions                                            %>%
+  summarize(n = n(),
+            distinctRowID = n_distinct(row_id),
+            minRowID      = min(row_id, na.rm=TRUE),
+            maxRowID      = max(row_id, na.rm=TRUE))  %>%
+  collect()                                           %>%
+  Show()
+```
+
+## subject_id
+
+Foreign key. Identifies the patient.
+
+Parent is patients table.
+
+```{r}
+admissions                                                   %>%
+  summarize(n = n(),
+            distinctSubjectID = n_distinct(subject_id),
+            minSubjectID      = min(subject_id, na.rm=TRUE),
+            maxSubjectID      = max(subject_id, na.rm=TRUE)) %>%
+  Show()
+```
+
+There are two groups of `subject _id` ranges.
+
+```{r}
+admissions              %>%
+  select(subject_id)    %>%
+  collect               %>%
+  ggplot(aes(x=subject_id))                                 +
+  geom_histogram(fill="cornsilk", color="grey80", bins=100) +
+  scale_x_continuous(breaks = 0:10 * 10000,
+                     labels = function(n){format(n, scientific = FALSE)},
+                     minor_breaks = NULL)                   +
+  geom_vline(xintercept = 36500, color = "skyblue")         +
+  labs(title = "Different ranges of MIMIC-III subject_ids",
+       caption=c(plotCaptionLeft, plotCaptionRight))        +
+  theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+```
+
+The reason for a break in the subject_ids from ~33000 to 40000 is unclear.
+
+Also unclear is why the counts are higher for the lower subject_ids and lower for the higher subject_ids.
+
+## hadm_id
+
+Primary key:  Identifies the hospital stay
+
+```{r}
+admissions                                         %>%
+  summarize(n = n(),
+            distinctHadm = n_distinct(hadm_id),
+            minHadmID = min(hadm_id, na.rm=TRUE),
+            maxHadmID = max(hadm_id, na.rm=TRUE))  %>%
+  collect()                                        %>%
+  Show()
+```
+
+## admittime, dischtime, deathtime
+
+* Time of admission to the hospital.
+
+* Time of discharge from the hospital.
+
+* Time of death.
+
+sample values
+
+Unclear why time differences are in minutes here.
+
+```{r}
+admissions                                                   %>%
+  select(admittime, dischtime, deathtime)                    %>%
+  collect()                                                  %>%
+  mutate(StayDays = as.double(dischtime - admittime) /1440)  %>%
+  head(10)  %>%
+  Show()
+```
+
+How does visit time vary?
+
+Length of Stay = Discharge Time - Admit Time
+
+```{r, fig.width = 8}
+admissions %>%
+  select(admittime, dischtime, deathtime)                     %>%
+  collect()                                                   %>%
+  mutate(StayDays = as.double(dischtime - admittime) / 1440)  %>%
+  filter(StayDays > 0)                                        %>%
+
+  ggplot(aes(x = StayDays, y = ..density..))                       +
+    geom_histogram(fill="cornsilk", color="grey80", binwidth=0.25) +
+    geom_density()                                                 +
+    scale_x_log10(breaks = c(0.25, 0.50, 1, 2, 4, 7, 14, 28),
+                  minor_breaks = NULL)                             +
+    labs(title="MIMIC-III Length of Stay",
+         x = "Stay Time [Days]",
+         caption=c(plotCaptionLeft, plotCaptionRight))             +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+```
+
+
+deathtime is mostly missing
+
+```{r}
+admissions                  %>%
+  filter(is.na(deathtime))  %>%
+  count()                   %>%
+  collect()                 %>%
+  Show()
+```
+
+What are the death years?
+
+```{r}
+deathStats <-
+  admissions                                    %>%
+  select(deathtime)                             %>%
+  filter(!is.na(deathtime))                     %>%
+  collect()                                     %>%
+  mutate(deathYear = as.numeric(substr(deathtime, 1, 4)))   %>%
+  select(deathYear)                             %>%
+  group_by(deathYear)                           %>%
+  count()
+```
+
+```{r, comment=NA}
+c(nrow(deathStats), sum(deathStats$n))
+```
+
+```{r}
+ggplot(data=deathStats, aes(x=deathYear, y=n))                  +
+  geom_bar(stat="identity", fill="cornsilk", colour="grey80")   +
+  labs(title="MIMIC-III Death Year",
+         x = "Death Year (time shifted)",
+         y = "Number of Deaths",
+         caption=c(plotCaptionLeft, plotCaptionRight))             +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+
+```
+
+```{r, comment=NA}
+c(min(deathStats$deathYear), max(deathStats$deathYear))
+```
+
+Are deaths spread somewhat uniformly by month?  Roughly, yes.
+
+```{r}
+deathInfo <-
+  admissions                                    %>%
+  select(deathtime)                             %>%
+  filter(!is.na(deathtime))                     %>%
+  collect()                                     %>%
+  mutate(deathYear  = as.numeric(substr(deathtime, 1, 4)),
+         deathMonth = as.numeric(substr(deathtime, 6, 7)))
+```
+
+```{r, fig.width=8}
+smoothScatter(deathInfo$deathYear,
+              deathInfo$deathMonth,
+              xlab = "Death Year",
+              ylab = "Death Month")
+```
+
+The expectation is the above scatterplot should be mostly random.
+
+## admission_type
+
+```{r}
+admissions                                               %>%
+  group_by(admission_type)                               %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## admission_location
+
+```{r}
+admissions                                               %>%
+  group_by(admission_location)                           %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## discharge_location
+
+```{r}
+admissions                                               %>%
+  group_by(discharge_location)                           %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## insurance
+
+```{r}
+admissions                                               %>%
+  group_by(insurance)                                    %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## language
+
+```{r}
+admissions                                               %>%
+  group_by(language)                                     %>%
+  summarize(n = n())                                     %>%
+  Show()                                                 %>%
+  scroll_box(height = "500px")
+```
+
+## religion
+
+```{r}
+admissions                                               %>%
+  group_by(religion)                                     %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## marital_status
+
+```{r}
+admissions                                               %>%
+  group_by(marital_status)                               %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## ethnicity
+
+```{r}
+admissions                                               %>%
+  group_by(ethnicity)                                    %>%
+  summarize(n = n())                                     %>%
+  Show()                                                 %>%
+  scroll_box(height = "500px")
+```
+
+## edregtime, edouttime
+
+Thought to be ...
+
+* Emergency Department Registation Time
+
+* Emergency Department Out Time
+
+```{r, comment=NA}
+admissions   %>%
+  select(edregtime, edouttime)  %>%
+  head(5)    %>%
+  collect()  %>%
+  Show()
+
+```
+
+```{r}
+admissions                  %>%
+ filter(is.na(edregtime))   %>%
+  count()                   %>%
+  collect()                 %>%
+  Show()
+```
+
+
+```{r}
+admissions                  %>%
+ filter(is.na(edouttime))   %>%
+  count()                   %>%
+  collect()                 %>%
+  Show()
+```
+
+```{r}
+admissions                   %>%
+  filter(!is.na(edouttime))  %>%
+  count()                    %>%
+  collect()                  %>%
+  Show()
+```
+
+## diagnosis
+
+```{r}
+diagnosisCounts <-
+  admissions                                             %>%
+  group_by(diagnosis)                                    %>%
+  summarize(n = n())                                     %>%
+  collect()
+
+nrow(diagnosisCounts)
+```
+
+top 20
+
+```{r}
+diagnosisCounts     %>%
+  arrange(desc(n))  %>%
+  head(20)          %>%
+  Show()
+```
+
+Write to file for further study.
+
+A number of diagnosis fields have multiple diagnoses separate by ";".
+
+```{r}
+write_xlsx(diagnosisCounts, "Admission-Diagnosis.xlsx")
+```
+
+## hospital_expire_flag
+
+```{r}
+admissions                                               %>%
+  group_by(hospital_expire_flag)                         %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+## has_chartevents_data
+
+Hospital admission has at least one observation in the CHARTEVENTS table.
+
+```{r}
+admissions                                               %>%
+  group_by(has_chartevents_data)                         %>%
+  summarize(n = n())                                     %>%
+  Show()
+```
+
+# Close database
+
+```{r, comment=NA}
+dbDisconnect(MimicDB)
+```
+
+*****
+
+```{r, comment=NA, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:",
+                        sprintf("%.1f",
+                                as.numeric(difftime(time.2, time.1,
+                                                    units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
