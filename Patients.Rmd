@@ -72,6 +72,7 @@ MimicDB <- dbConnect(RPostgres::Postgres(),
                      dbname   = "mimic",
                      user     = Sys.getenv("MIMIC_User"),
                      password = Sys.getenv("MIMIC_Password"),
+                     bigint   = "integer",
                      options  = "-c search_path=mimiciii")
 
 plotCaptionLeft  <- "MIMIC-III v1.4"
@@ -264,6 +265,7 @@ RPostgres package does not work correctly with dates before 1970 (fix expected i
 ## Computed:  Age at Death [CORRECT results with RPostgreSQL]
 
 ```{r, comment=NA}
+library(RPostgreSQL)
 MimicDB <- dbConnect(RPostgreSQL::PostgreSQL(), 
                      dbname   = "mimic",
                      user     = Sys.getenv("MIMIC_User"),
