@@ -1,0 +1,467 @@
+---
+title: "MIMIC-III Diagnoses Tables"
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+---
+
+<style type="text/css">
+div#TOC li {
+    list-style:none;
+    background-image:none;
+    background-repeat:none;
+    background-position:0; 
+}
+</style>
+
+efg | 2019-01-06
+
+# Fact and Dimension tables
+
+The MIMIC-III schema shows a fact table,  [diagnoses_icd](https://mit-lcp.github.io/mimic-schema-spy/tables/diagnoses_icd.html), with a record for each patient-admission-diagnosis.  The details of the related ICD 9 diagnosis codes are in the dimension table,  [d_icd_diagnoses](https://mit-lcp.github.io/mimic-schema-spy/tables/d_icd_diagnoses.html).
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(cli.unicode = FALSE)
+time.1 <- Sys.time()
+```
+
+```{r, comment=NA}
+plotCaptionLeft  <- "MIMIC-III v1.4"
+plotCaptionRight <- paste("efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+## Packages 
+
+```{r, comment=NA}
+library(DBI)
+library(RPostgres)
+library(tidyverse)
+library(dbplyr, warn.conflicts=FALSE)
+library(kableExtra)
+library(ggplot2)
+library(writexl)
+```
+
+## Helper function
+
+```{r}
+Show <- function(data, caption=NULL)
+{
+  data                            %>%
+  kable("html", caption=caption)  %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"),
+                position = "left", full_width = FALSE)
+}
+```
+
+## Open database
+
+```{r, comment=NA}
+MimicDB <- dbConnect(RPostgres::Postgres(), 
+                     dbname   = "mimic",
+                     user     = Sys.getenv("MIMIC_User"),
+                     password = Sys.getenv("MIMIC_Password"),
+                     bigint   = "integer",                      # RPostgres
+                     options  = "-c search_path=mimiciii")  
+
+dimDiagnoses   <- tbl(MimicDB, in_schema("mimiciii", "d_icd_diagnoses"))
+factDiagnoses  <- tbl(MimicDB, in_schema("mimiciii", "diagnoses_icd"))
+
+factAdmissions <- tbl(MimicDB, in_schema("mimiciii", "admissions"))
+factPatients   <- tbl(MimicDB, in_schema("mimiciii", "patients"))
+```
+
+# Tables
+
+## Dimension table:  d_icd_diagnoses
+
+### Fields
+
+```{r, comment=NA}
+dbListFields(MimicDB, "d_icd_diagnoses")
+```
+
+### Record count
+
+```{r, comment=NA}
+dimDiagnoses  %>%
+  count()     %>%
+  Show()
+```
+
+The schema says this table has 14,710 records, but the raw data file D_ICD_DIAGNOSES.csv has 14,567 records.  The value above is correct.
+
+### Sample records
+
+```{r, comment=NA}
+dimDiagnoses          %>% 
+  arrange(icd9_code)  %>%
+  head(10)            %>%
+  Show(caption = "Samle Records from Diagnoses Dimension Table, d_icd_diagnoses")
+```
+
+## Fact table:  diagnoses_icd
+
+### Fields
+
+```{r, comment=NA}
+dbListFields(MimicDB, "diagnoses_icd")
+```
+
+### Record count
+
+```{r, comment=NA}
+factDiagnoses %>%
+  summarize(n = n(), 
+            diagnosesCodes = n_distinct(icd9_code)) %>%
+  Show()
+```
+
+A number of fact records are missing icd9_code values
+
+```{r, comment=NA}
+factDiagnoses               %>%
+  select(icd9_code)         %>%
+  collect()                 %>%
+  summarize(icd9NAs = sum(is.na(icd9_code)))  %>%
+  Show()
+```
+
+### Sample records
+
+```{r, comment=NA}
+factDiagnoses  %>% 
+  head(5)      %>%
+  Show(caption = "Sample Records from Diagnoses Fact Table, diagnoses_icd")
+```
+
+### Fields
+
+#### seq_num:  diagnosis priority
+
+```{r, comment=NA}
+priorityCounts <-
+  factDiagnoses      %>%
+  group_by(seq_num)  %>%
+  count()            %>%  
+  collect()
+
+priorityCounts       %>%
+  Show()             %>%
+  scroll_box(height = "400px")
+```
+
+Sequence 1 is the primary code.
+
+```{r, fig.wdith=6, fig.height=4}
+ggplot(data = priorityCounts, aes(x = seq_num, y = n))  +
+  geom_bar(stat = "identity", fill = "cornsilk")        +
+  scale_y_continuous(labels = scales::comma)            +
+  labs(title = "Diagnosis Priority",
+       subtitle = paste(format(sum(priorityCounts$n, na.rm=TRUE), 
+                               big.mark = ","), "fact records"),
+       x = "Diagnosis Priority (seq_num)",
+       y = "Counts",
+       caption=c(plotCaptionLeft, plotCaptionRight))    +
+  theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+  
+```
+
+
+## Join diagnoses tables
+
+Add dimension information to fact table so word descriptions can be viewed instead of codes.
+
+### inner_join
+
+```{r, comment=NA}
+factDiagnoses                                 %>% 
+  inner_join(dimDiagnoses, by = "icd9_code")  %>%
+  select(-starts_with("row_id."))             %>%
+  head(5)                                     %>%
+  collect()                                   %>%
+  Show(caption = "Sample Diagnoses Records (Fact + Dimension)")
+```
+
+Why were so many fact records lost in join?
+
+```{r, comment=NA}
+factDiagnoses                                 %>% 
+  inner_join(dimDiagnoses, by = "icd9_code")  %>%
+  count()                                     %>%
+  Show()
+```
+
+```{r}
+dimICD9codes <- 
+  dimDiagnoses       %>%
+  select(icd9_code)  %>%
+  distinct()         %>%
+  arrange(icd9_code) %>%
+  collect()
+
+nrow(dimICD9codes)
+```
+
+```{r}
+factICD9codes <- 
+  factDiagnoses      %>%
+  select(icd9_code)  %>%
+  distinct()         %>%
+  arrange(icd9_code) %>%
+  collect()
+
+nrow(factICD9codes)
+```
+
+Fact codes not in dimension list
+
+The dimension table could likely be supplemented with information about ICD-9-CM codes from the [National Center for Health Statistics](https://www.cdc.gov/nchs/icd/icd9cm.htm).
+
+```{r}
+factNotInDim <- setdiff(factICD9codes$icd9_code, dimICD9codes$icd9_code)
+factNotInDim
+```
+
+Many dimension records are not referenced by a fact table.
+
+```{r}
+dimNotInFact <- setdiff(dimICD9codes$icd9_code, factICD9codes$icd9_code)
+length(dimNotInFact)
+```
+
+### left_join
+
+Keep all diagnosis codes even if not in dimension table using a `left_join`.  This will create NULLs for diagnosis descriptions.
+
+```{r, comment=NA}
+factDiagnoses                                 %>% 
+  left_join(dimDiagnoses, by = "icd9_code")   %>%
+  count()                                     %>%
+  Show()
+```
+
+So, normally we'll use a left_join with `dimDiagnoses` and missing labels will be NULL.
+
+# Summaries
+
+## Summarize Diagnoses Counts
+
+```{r, comment=NA}
+diagnosesCounts <- 
+  factDiagnoses                     %>% 
+  filter(!is.na(icd9_code))         %>%
+  group_by(icd9_code)               %>%
+  count()                           %>%
+  ungroup()                         %>%                   
+  left_join(dimDiagnoses, 
+             by = "icd9_code")      %>%
+  select(n, everything(), -row_id)  %>%
+  arrange(desc(n))                  %>%
+  collect()
+ 
+nrow(diagnosesCounts)
+```
+
+Many of the ICD 9 diagnoses codes in the dimension table are never referenced.
+
+### Top 10
+
+```{r}
+diagnosesCounts %>% head(10) %>% Show()
+```
+
+## Summarize Diagnoses as Primary or Secondary
+
+```{r, comment=NA}
+diagnosesPrimaryCounts <- 
+  factDiagnoses                     %>% 
+  filter(!is.na(icd9_code))         %>%
+  mutate(priority = ifelse(seq_num == 1, 
+                           "Primary", 
+                           "Secondary"))  %>%
+  group_by(icd9_code, priority)     %>%
+  count()                           %>%
+  ungroup()                         %>%
+  collect()                         %>%
+  spread(priority, n, fill=0)       %>%
+  mutate(n = Primary + Secondary)   %>%
+  left_join(dimDiagnoses, 
+            by = "icd9_code",
+            copy = TRUE)            %>%
+  select(n, Primary, Secondary, 
+         everything(), -row_id)     %>%
+  arrange(desc(n))                 
+ 
+nrow(diagnosesPrimaryCounts)
+```
+
+### Top 10 Primary Diagnoses
+
+```{r, comment=NA}
+diagnosesPrimaryCounts    %>%
+  arrange(desc(Primary))  %>%
+  head(10)                %>%
+  Show()
+```
+
+Save for further study
+
+```{r, comment=NA}
+write_xlsx(diagnosesPrimaryCounts, "MIMIC-III-Diagnoses-Counts.xlsx")
+```
+
+## Summarize Diagnoses by Age Intervals
+
+```{r, comment=NA}
+admitAges <-
+  factDiagnoses                               %>% 
+  inner_join(factPatients,
+             by = "subject_id")               %>%
+  inner_join(factAdmissions,
+             by = c("subject_id",
+                    "hadm_id"))                           %>%
+  select(subject_id, hadm_id, icd9_code, dob, admittime)  %>%
+  collect()                                               %>%
+  mutate(    # collect from database and use R from mutate
+          delta         = admittime - dob,
+          admitAgeYears = as.numeric((admittime - dob)) / ( 365.25 * 86400),  # seconds
+          ageInterval   = pmin(90, 10 * admitAgeYears %/% 10)    # age decades; 90 is 90+
+          )                                                  
+
+nrow(admitAges)
+```
+
+Sample records
+
+```{r}
+admitAges %>% 
+  head(2) %>% 
+  Show()
+```
+
+Counts by age intervals
+
+```{r, comment=NA}
+table(admitAges$ageInterval)
+```
+
+Interval percentages
+
+```{r, comment=NA}
+round(100 * table(admitAges$ageInterval) / nrow(admitAges), 2)
+```
+
+Here "0" means 0-9, "10" means 10-19, ..., "80"" means 80-89, "90"" means 90+
+
+Side note:  Decile intervals -- if balanced groups are wanted
+
+```{r, comment=NA}
+quantile(admitAges$admitAgeYears,
+         c(0.00, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00))  %>% round(1)
+```
+
+Admit ages are skewed to 50+ intervals
+
+### Admit Age Density
+
+```{r}
+ggplot(admitAges, aes(x = admitAgeYears, y = ..density..))             +
+    geom_histogram(fill="cornsilk", color="grey80", binwidth=1) +
+    geom_density()                                              +
+    xlim(0, 100)  + 
+    labs(title="MIMIC-III Admit Age",
+         x = "Admit Age [Years]",                        
+         caption=c(plotCaptionLeft, plotCaptionRight))          +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+```
+
+### Counts by diagnosis and age interval
+
+```{r, comment=NA}
+admitAgesCounts <-
+  factDiagnoses                                 %>% 
+  inner_join(factPatients,
+             by = "subject_id")                 %>%
+  inner_join(factAdmissions,
+             by = c("subject_id",
+                    "hadm_id"))                 %>%
+  select(subject_id, hadm_id, icd9_code, dob, admittime)  %>%
+  collect()                                               %>%   # extract data from DB
+  mutate(                                                       # normal R processing 
+          delta         = admittime - dob,
+          admitAgeYears = as.numeric((admittime - dob)) / ( 365.25 * 86400),  # seconds
+          ageInterval   = pmin(90, 10 * admitAgeYears %/% 10)    # age decades; 90 is 90+
+        )                                       %>%  
+  group_by(icd9_code, ageInterval)              %>%
+  count()                                       %>%  # counts in long format
+  ungroup()                                     %>%
+  arrange(icd9_code, ageInterval)               %>%
+  spread(ageInterval, n, fill=0)                %>%  # long to wide format
+  mutate(RowTotal = rowSums(.[-1], na.rm=TRUE)) %>%
+  select(icd9_code, RowTotal, everything())     %>%  # reorder variables
+  arrange(desc(RowTotal))                       %>%  # descending order 
+  left_join(dimDiagnoses, by = "icd9_code",          # add code labels
+            copy = TRUE)                        %>%  # table to tibble
+  select(-row_id)                               %>%  # remove a variable
+  rename( "0s"= "0", "10s"="10", "20s"="20", "30s"="30",
+         "40s"="40", "50s"="50", "60s"="60", "70s"="70",
+         "80s"="80", "90+"="90")                     # slightly better names
+
+nrow(admitAgesCounts)
+```
+
+```{r}
+admitAgesCounts  %>%
+  head(5)        %>%
+  Show()
+```
+
+
+Add total row at bottom
+
+```{r}
+admitAgesCounts <-
+  bind_rows(admitAgesCounts,
+            bind_cols(icd9_code = "ColumnTotal",
+                      admitAgesCounts %>%
+                        summarize_if(is.numeric, sum, na.rm=TRUE)))
+```
+
+
+```{r}
+admitAgesCounts  %>%
+  tail(3)        %>%
+  Show()
+```
+
+Save for further study
+
+```{r, comment=NA}
+write_xlsx(admitAgesCounts, "MIMIC-III-Diagnoses-Counts-by-Age-Intervals.xlsx")
+```
+
+**Close Database**
+
+```{r, comment=NA}
+dbDisconnect(MimicDB)
+```
+
+*****
+
+```{r, comment=NA, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", 
+                        sprintf("%.1f",
+                                as.numeric(difftime(time.2, time.1,
+                                                    units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`

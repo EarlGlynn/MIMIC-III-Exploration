@@ -8,6 +8,15 @@ output:
     toc: yes
 ---
 
+<style type="text/css">
+div#TOC li {
+    list-style:none;
+    background-image:none;
+    background-repeat:none;
+    background-position:0;
+}
+</style>              
+
 efg | 2018-12-30
 
 NOTES:  
@@ -30,7 +39,7 @@ time.1 <- Sys.time()
 
 ```{r, comment=NA}
 library(DBI)
-library(RPostgres)   # be cautious with Postgres dates before 1970
+library(RPostgres)   # be cautious with dates before 1970 with RPostgres
 library(tidyverse)
 library(dbplyr, warn.conflicts=FALSE)
 library(kableExtra)
@@ -243,7 +252,7 @@ ggplot(data=deathStats, aes(x=deathYear, y=n))                  +
   labs(title="MIMIC-III Death Year",
          x = "Death Year (time shifted)",
          y = "Number of Deaths",
-         caption=c(plotCaptionLeft, plotCaptionRight))             +
+         caption=c(plotCaptionLeft, plotCaptionRight))          +
     theme(plot.caption = element_text(hjust=c(0.0,1.0)))
 
 ```
@@ -276,74 +285,74 @@ The expectation is the above scatterplot should be mostly random.
 ## admission_type
 
 ```{r}
-admissions                                               %>%
-  group_by(admission_type)                               %>%
-  summarize(n = n())                                     %>%
+admissions                      %>%
+  group_by(admission_type)      %>%
+  summarize(n = n())            %>%
   Show()
 ```
 
 ## admission_location
 
 ```{r}
-admissions                                               %>%
-  group_by(admission_location)                           %>%
-  summarize(n = n())                                     %>%
+admissions                      %>%
+  group_by(admission_location)  %>%
+  summarize(n = n())            %>%
   Show()
 ```
 
 ## discharge_location
 
 ```{r}
-admissions                                               %>%
-  group_by(discharge_location)                           %>%
-  summarize(n = n())                                     %>%
+admissions                      %>%
+  group_by(discharge_location)  %>%
+  summarize(n = n())            %>%
   Show()
 ```
 
 ## insurance
 
 ```{r}
-admissions                                               %>%
-  group_by(insurance)                                    %>%
-  summarize(n = n())                                     %>%
+admissions                      %>%
+  group_by(insurance)           %>%
+  summarize(n = n())            %>%
   Show()
 ```
 
 ## language
 
 ```{r}
-admissions                                               %>%
-  group_by(language)                                     %>%
-  summarize(n = n())                                     %>%
-  Show()                                                 %>%
+admissions                      %>%
+  group_by(language)            %>%
+  summarize(n = n())            %>%
+  Show()                        %>%
   scroll_box(height = "500px")
 ```
 
 ## religion
 
 ```{r}
-admissions                                               %>%
-  group_by(religion)                                     %>%
-  summarize(n = n())                                     %>%
+admissions                      %>%
+  group_by(religion)            %>%
+  summarize(n = n())            %>%
   Show()
 ```
 
 ## marital_status
 
 ```{r}
-admissions                                               %>%
-  group_by(marital_status)                               %>%
-  summarize(n = n())                                     %>%
+admissions                      %>%
+  group_by(marital_status)      %>%
+  summarize(n = n())            %>%
   Show()
 ```
 
 ## ethnicity
 
 ```{r}
-admissions                                               %>%
-  group_by(ethnicity)                                    %>%
-  summarize(n = n())                                     %>%
-  Show()                                                 %>%
+admissions                      %>%
+  group_by(ethnicity)           %>%
+  summarize(n = n())            %>%
+  Show()                        %>%
   scroll_box(height = "500px")
 ```
 
@@ -356,10 +365,10 @@ Thought to be ...
 * Emergency Department Out Time
 
 ```{r, comment=NA}
-admissions   %>%
+admissions                      %>%
   select(edregtime, edouttime)  %>%
-  head(5)    %>%
-  collect()  %>%
+  head(5)                       %>%
+  collect()                     %>%
   Show()
 
 ```
@@ -393,9 +402,9 @@ admissions                   %>%
 
 ```{r}
 diagnosisCounts <-
-  admissions                                             %>%
-  group_by(diagnosis)                                    %>%
-  summarize(n = n())                                     %>%
+  admissions                 %>%
+  group_by(diagnosis)        %>%
+  summarize(n = n())         %>%
   collect()
 
 nrow(diagnosisCounts)
@@ -404,9 +413,9 @@ nrow(diagnosisCounts)
 top 20
 
 ```{r}
-diagnosisCounts     %>%
-  arrange(desc(n))  %>%
-  head(20)          %>%
+diagnosisCounts             %>%
+  arrange(desc(n))          %>%
+  head(20)                  %>%
   Show()
 ```
 
@@ -421,9 +430,9 @@ write_xlsx(diagnosisCounts, "Admission-Diagnosis.xlsx")
 ## hospital_expire_flag
 
 ```{r}
-admissions                                               %>%
-  group_by(hospital_expire_flag)                         %>%
-  summarize(n = n())                                     %>%
+admissions                       %>%
+  group_by(hospital_expire_flag) %>%
+  summarize(n = n())             %>%
   Show()
 ```
 
@@ -432,9 +441,9 @@ admissions                                               %>%
 Hospital admission has at least one observation in the CHARTEVENTS table.
 
 ```{r}
-admissions                                               %>%
-  group_by(has_chartevents_data)                         %>%
-  summarize(n = n())                                     %>%
+admissions                       %>%
+  group_by(has_chartevents_data) %>%
+  summarize(n = n())             %>%
   Show()
 ```
 

@@ -8,6 +8,15 @@ output:
     toc: yes
 ---
 
+<style type="text/css">
+div#TOC li {
+    list-style:none;
+    background-image:none;
+    background-repeat:none;
+    background-position:0;
+}
+</style>    
+
 efg | 2018-12-30
 
 According to [schema](https://mit-lcp.github.io/mimic-schema-spy/tables/patients.html) these tables are children of the patients table:
@@ -90,7 +99,7 @@ dbListFields(MimicDB, "patients")
 ```{r, comment=NA}
 patients <- tbl(MimicDB, in_schema("mimiciii", "patients"))
 
-patients         %>% 
+patients          %>% 
   head(10)        %>%
   Show()
 ```
