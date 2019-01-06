@@ -10,7 +10,7 @@ The MIMIC-III database schema can be [viewed online here](https://mit-lcp.github
 
 ## Database tables
 
-### patients table
+### patients
 
 * Explore the six fields in the `patients` table.
 
@@ -22,7 +22,7 @@ The MIMIC-III database schema can be [viewed online here](https://mit-lcp.github
 
 * Database drivers `RPostgres` and `PostgreSQL` give different age-at-death density plots (for now) since date computations are not always correct.
 
-### admissions table
+### admissions
 
 * Explore the 15 fields in the `admissions` table.
 
@@ -30,9 +30,9 @@ The MIMIC-III database schema can be [viewed online here](https://mit-lcp.github
 
 * The relationship between the `diagnosis` field in this table and the `diagnoses_icd` table information is unclear.
 
-### diagnoses table
+### diagnoses_icd and d_icd_diagnoses
 
-* Explore the `diagnoses_icd` fact table with additional information in the `d_icd_diagnosis` dimension table.
+* Explore the `diagnoses_icd` fact table with additional information in the `d_icd_diagnoses` dimension table.
 
 * A bar plot of `seq_num` (diagnosis priority) shows values can range from 1 to 39, but usually are less than 10.
 
@@ -40,7 +40,7 @@ The MIMIC-III database schema can be [viewed online here](https://mit-lcp.github
 
 * The fact table has over 140 icd 9 codes that cannot be found in the dimension table.
 
-* A `left_join` is likely more desirable than an `inner_join` when connecting the tables the dimension table to the fact table.
+* A `left_join` is likely more desirable than an `inner_join` when connecting the dimension table to the fact table.
 
 * Computed Summaries
 
