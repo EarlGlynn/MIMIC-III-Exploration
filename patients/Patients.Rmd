@@ -3,7 +3,7 @@ title: "MIMIC-III Patients Table"
 output:
   html_document:
     toc: yes
-    number_sections: true  
+    number_sections: yes 
   html_notebook:
     toc: yes
 ---
@@ -167,7 +167,6 @@ dobByYearMonth <-
   count()  %>%
   ungroup()                                %>%
   collect()                                %>%
-  mutate(n = as.numeric(n))                %>% # force from int64 to double
   arrange(Year, Month)                     %>%
   spread(Month, n, fill=0)
 ```
@@ -206,7 +205,6 @@ dodByYearMonth <-
   count()                                  %>%
   ungroup()                                %>%
   collect()                                %>%
-  mutate(n = as.numeric(n))                %>% # force from int64 to double
   arrange(Year, Month)                     %>%
   spread(Month, n, fill=0)
 ```
