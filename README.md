@@ -1,6 +1,8 @@
 # Exploring MIMIC-III Critical Care Database
 
-The examples in this repository build in the information from the [MIMIC-III: Getting Started](https://github.com/EarlGlynn/MIMIC-III-Getting-Started) repository.
+The examples in this repository build o the information from the [MIMIC-III: Getting Started](https://github.com/EarlGlynn/MIMIC-III-Getting-Started) repository.
+
+PowerPoint slides are in the root directory in both .pptx and .pdf formats.
 
 ## Repository Directories
 
