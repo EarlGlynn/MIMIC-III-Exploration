@@ -103,7 +103,7 @@ The schema says this table has 14,710 records, but the raw data file D_ICD_DIAGN
 dimDiagnoses          %>% 
   arrange(icd9_code)  %>%
   head(10)            %>%
-  Show(caption = "Samle Records from Diagnoses Dimension Table, d_icd_diagnoses")
+  Show(caption = "Sample Records from Diagnoses Dimension Table, d_icd_diagnoses")
 ```
 
 ## Fact table:  diagnoses_icd
@@ -137,7 +137,8 @@ factDiagnoses               %>%
 
 ```{r, comment=NA}
 factDiagnoses  %>% 
-  head(5)      %>%
+  arrange(subject_id, row_id)  %>%  # control order
+  head(5)                      %>%
   Show(caption = "Sample Records from Diagnoses Fact Table, diagnoses_icd")
 ```
 
@@ -183,7 +184,15 @@ Add dimension information to fact table so word descriptions can be viewed inste
 ```{r, comment=NA}
 factDiagnoses                                 %>% 
   inner_join(dimDiagnoses, by = "icd9_code")  %>%
-  select(-starts_with("row_id."))             %>%
+  head()                                      %>%
+  collect()                                   %>%
+  str()              
+```  
+  
+```{r, comment=NA}
+factDiagnoses                                 %>% 
+  inner_join(dimDiagnoses, by = "icd9_code")  %>%
+  arrange(subject_id, row_id.x)               %>%  # control order
   head(5)                                     %>%
   collect()                                   %>%
   Show(caption = "Sample Diagnoses Records (Fact + Dimension)")
@@ -246,6 +255,27 @@ factDiagnoses                                 %>%
   count()                                     %>%
   Show()
 ```
+
+How many were given NULL short_titles?
+
+```{r}
+factDiagnoses                                 %>% 
+  left_join(dimDiagnoses, by = "icd9_code")   %>%
+  filter(is.na(short_title))                  %>%
+  count()                                     %>%
+  Show()
+```
+
+Examples with missing short_titles
+
+```{r}
+factDiagnoses                                 %>% 
+  left_join(dimDiagnoses, by = "icd9_code")   %>%
+  filter(is.na(short_title))                  %>%
+  head(2)                                     %>%
+  Show()
+```
+
 
 So, normally we'll use a left_join with `dimDiagnoses` and missing labels will be NULL.
 
@@ -329,7 +359,7 @@ admitAges <-
                     "hadm_id"))                           %>%
   select(subject_id, hadm_id, icd9_code, dob, admittime)  %>%
   collect()                                               %>%
-  mutate(    # collect from database and use R from mutate
+  mutate(    # collect from database and use R for mutate
           delta         = admittime - dob,
           admitAgeYears = as.numeric((admittime - dob)) / ( 365.25 * 86400),  # seconds
           ageInterval   = pmin(90, 10 * admitAgeYears %/% 10)    # age decades; 90 is 90+
@@ -372,10 +402,11 @@ Admit ages are skewed to 50+ intervals
 ### Admit Age Density
 
 ```{r}
-ggplot(admitAges, aes(x = admitAgeYears, y = ..density..))             +
+ggplot(admitAges, aes(x = admitAgeYears, y = ..density..))      +
     geom_histogram(fill="cornsilk", color="grey80", binwidth=1) +
     geom_density()                                              +
-    xlim(0, 100)  + 
+    xlim(0, 100)                                                + 
+    ylim(0.00, 0.03)                                            +
     labs(title="MIMIC-III Admit Age",
          x = "Admit Age [Years]",                        
          caption=c(plotCaptionLeft, plotCaptionRight))          +
