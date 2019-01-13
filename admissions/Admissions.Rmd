@@ -25,7 +25,7 @@ NOTES:
 
 * Rpostgres does NOT work with dates before 1970 (*fix expected in Feb. 2019*), but computes time intervals below correctly.
 
-See info about `admissions` table in [online schema](https://mit-lcp.github.io/mimic-schema-spy/tables/admissions.html).
+Online [info about the admissions table](https://mimic.physionet.org/mimictables/admissions/).  See info about `admissions` table in [online schema](https://mit-lcp.github.io/mimic-schema-spy/tables/admissions.html).  
 
 # Setup
 
@@ -164,6 +164,8 @@ Also unclear is why the counts are higher for the lower subject_ids and lower fo
 
 Primary key:  Identifies the hospital stay
 
+A patient with multiple admissions will have duplicate SUBJECT_ID entries for the same HADM_ID.
+
 ```{r}
 admissions                                         %>%
   summarize(n = n(),
@@ -180,7 +182,7 @@ admissions                                         %>%
 
 * Time of discharge from the hospital.
 
-* Time of death.
+* Time of death (only if death occurred in hospital).  SHould match time of discharge when present.
 
 sample values
 
@@ -207,9 +209,9 @@ admissions %>%
   filter(StayDays > 0)                                        %>%
 
   ggplot(aes(x = StayDays, y = ..density..))                       +
-    geom_histogram(fill="cornsilk", color="grey80", binwidth=0.25) +
+    geom_histogram(fill="cornsilk", color="grey80", bins = 100)    +
     geom_density()                                                 +
-    scale_x_log10(breaks = c(0.25, 0.50, 1, 2, 4, 7, 14, 28),
+    scale_x_log10(breaks = c(0.25, 0.50, 1, 2, 4, 7, 14, 28, 60, 150),
                   minor_breaks = NULL)                             +
     labs(title="MIMIC-III Length of Stay",
          x = "Stay Time [Days]",
@@ -358,11 +360,9 @@ admissions                      %>%
 
 ## edregtime, edouttime
 
-Thought to be ...
-
 * Emergency Department Registation Time
 
-* Emergency Department Out Time
+* Emergency Department Discharge Time
 
 ```{r, comment=NA}
 admissions                      %>%
@@ -381,15 +381,6 @@ admissions                  %>%
   Show()
 ```
 
-
-```{r}
-admissions                  %>%
- filter(is.na(edouttime))   %>%
-  count()                   %>%
-  collect()                 %>%
-  Show()
-```
-
 ```{r}
 admissions                   %>%
   filter(!is.na(edouttime))  %>%
@@ -398,14 +389,59 @@ admissions                   %>%
   Show()
 ```
 
+### Emergency room length of stay
+
+```{r}
+ERStay <- 
+  admissions                    %>%
+  filter(!is.na(edregtime),  
+         !is.na(edouttime))     %>%
+  select(edregtime, edouttime)  %>%
+  collect()                     %>%   
+  mutate(ERStayMinutes = as.double(edouttime - edregtime) / 60)
+
+nrow(ERStay)
+```
+
+```{r}
+ERStay %>% head() %>% Show()
+```
+
+```{r}
+quantile(ERStay$ERStayMinutes, 
+         c(0.00, 0.01, 0.25, 0.50, 0.75, 0.99, 1.00))
+```
+
+
+How does ER time vary?
+
+```{r, fig.width = 8}
+ERStay                        %>%
+  filter(ERStayMinutes > 0)   %>%
+
+  ggplot(aes(x = ERStayMinutes, y = ..density..))                  +
+    geom_histogram(fill="cornsilk", color="grey80", bins=100)      +
+    geom_density()                                                 +
+    scale_x_log10(breaks = c(0, 15, 30, 60, 120, 180, 300, 480, 1000, 2000, 4000),
+                  minor_breaks = NULL)                             +
+    labs(title="MIMIC-III Emergency Room Length of Stay",
+         x = "ER Stay Time [Minutes]",
+         caption=c(plotCaptionLeft, plotCaptionRight))             +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))
+```
+
 ## diagnosis
+
+Preliminary, free text diagnosis for the patient on hospital admission. The diagnosis is usually assigned by the admitting clinician and does not use a systematic ontology.
+
+Final diagnoses for hospital admissions are coded and can be found in the DIAGNOSES_ICD table
 
 ```{r}
 diagnosisCounts <-
   admissions                 %>%
   group_by(diagnosis)        %>%
   summarize(n = n())         %>%
-  collect()
+  collect()                 
 
 nrow(diagnosisCounts)
 ```
