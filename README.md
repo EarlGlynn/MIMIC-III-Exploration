@@ -51,3 +51,9 @@ The MIMIC-III database schema can be [viewed online here](https://mit-lcp.github
   * Counts by primary vs secondary diagnosis by ICD Diagnosis Code (stored in file)
 
   * Counts by 10-year age intervals by ICD Diagnosis Code (stored in file)
+
+### chartevents
+
+* Explore `chartevents` table with 330 million records and over 6400 types of chart events from two different `dbsource`s.
+
+* Explore event categories, parameter types, and units of measure.

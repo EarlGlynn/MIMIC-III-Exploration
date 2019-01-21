@@ -1,0 +1,356 @@
+---
+title: "MIMIC-III chartevents table -- 330 million records"
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+---
+
+<style type="text/css">
+div#TOC li {
+    list-style:none;
+    background-image:none;
+    background-repeat:none;
+    background-position:0; 
+}
+</style>
+
+efg | 2019-01-20
+
+# chartevents table
+
+Online [info about the chartevents table](https://mimic.physionet.org/mimictables/chartevents/).  The [schema](https://mit-lcp.github.io/mimic-schema-spy/tables/chartevents.html) shows the related tables.
+
+Over 6400 types of chart events in 330 million records
+
+From the online info:
+
+*CHARTEVENTS contains all the charted data available for a patient. During their ICU stay, the primary repository of a patient’s information is their electronic chart. The electronic chart displays patients’ routine vital signs and any additional information relevant to their care: ventilator settings, laboratory values, code status, mental status, and so on. As a result, the bulk of information about a patient’s stay is contained in CHARTEVENTS. Furthermore, even though laboratory values are captured elsewhere (LABEVENTS), they are frequently repeated within CHARTEVENTS. This occurs because it is desirable to display the laboratory values on the patient’s electronic chart, and so the values are copied from the database storing laboratory values to the database storing the CHARTEVENTS.*
+
+*Some items are duplicated between the labevents and chartevents tables. In cases where there is disagreement between measurements, labevents should be taken as the ground truth.*
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(cli.unicode = FALSE)
+time.1 <- Sys.time()
+```
+
+```{r, comment=NA}
+plotCaptionLeft  <- "MIMIC-III v1.4"
+plotCaptionRight <- paste("efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+## Packages 
+
+```{r, comment=NA}
+library(DBI)
+library(RPostgres)
+library(tidyverse)
+library(dbplyr, warn.conflicts=FALSE)
+library(kableExtra)
+library(ggplot2)
+library(writexl)
+```
+
+## Helper function
+
+```{r}
+Show <- function(data, caption=NULL)
+{
+  data                            %>%
+  kable("html", caption=caption)  %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"),
+                position = "left", full_width = FALSE)
+}
+```
+
+## Open database
+
+```{r, comment=NA}
+MimicDB <- dbConnect(RPostgres::Postgres(), 
+                     dbname   = "mimic",
+                     user     = Sys.getenv("MIMIC_User"),
+                     password = Sys.getenv("MIMIC_Password"),
+                     bigint   = "integer",                      # RPostgres
+                     options  = "-c search_path=mimiciii")  
+
+factChartEvents <- tbl(MimicDB, in_schema("mimiciii", "chartevents"))
+
+factAdmissions  <- tbl(MimicDB, in_schema("mimiciii", "admissions"))
+factPatients    <- tbl(MimicDB, in_schema("mimiciii", "patients"))
+factICUstays    <- tbl(MimicDB, in_schema("mimiciii", "icustays"))
+
+dimItems        <- tbl(MimicDB, in_schema("mimiciii", "d_items"))
+```
+
+# Sample records
+
+## Chart Events Fact
+
+```{r}
+factChartEvents  %>%
+  head()         %>%
+  Show()
+```
+
+## Items Dimension
+
+[Online info](https://mimic.physionet.org/mimictables/d_items/):  *The ABBREVIATION column, only available in Metavision, lists a common abbreviation for the label.*
+
+```{r}
+dimItems  %>%
+  head()  %>%
+  Show()
+```
+
+# Record Counts
+
+## Chart Events Fact
+
+```{r, comment=NA}
+factChartEvents  %>%
+  count()        %>%
+  Show()
+```
+
+## Items Dimension
+
+```{r}
+dimItems   %>%
+  count()  %>%
+  Show()
+```
+
+# Frequency Counts
+
+Join tables:  factChartEvents joined with dimItems (after counting)
+
+## Chart Events by Item
+
+```{r, comment=NA}
+chartItemCounts <- 
+  factChartEvents            %>%
+  group_by(itemid)           %>%
+  count()                    %>%
+  ungroup()                  %>%
+  inner_join(dimItems,
+             by = "itemid")  %>%
+  arrange(itemid)            %>%
+  select(n, everything(),        # put count first
+         -row_id)            %>%  
+  collect()
+  
+nrow(chartItemCounts)
+```
+
+Nearly half of the items in the dimension table were never referenced.
+
+Write to file for further study.
+
+```{r}
+write_xlsx(chartItemCounts, "Chart-Event-Item-Counts.xlsx")
+```
+
+Top 25 chart events by item count
+
+```{r}
+chartItemCounts            %>%
+  arrange(desc(n))         %>%
+  head(25)                 %>%
+  Show()
+```
+
+## Item category counts
+
+```{r, comment=NA}
+categoryCounts <-
+  chartItemCounts                            %>%
+  group_by(category)                         %>%
+  summarize(nCategory = sum(n, na.rm=TRUE))  %>%
+  ungroup()  
+
+nrow(categoryCounts)
+```
+
+```{r}
+categoryCounts  %>%
+  Show()
+```
+
+```{r, comment=NA}
+sum(categoryCounts$nCategory)
+```
+
+## Item unit name
+
+From [online info](https://mimic.physionet.org/mimictables/d_items/):
+
+*Note that there is sometimes additional information on the unit of measurement in the associated event table, e.g. the VALUEUOM column in CHARTEVENTS.*
+
+See `dbsource` info below about why there are some near duplicates.
+
+```{r, comment=NA}
+unitNameCounts <-
+  chartItemCounts                            %>%
+  group_by(unitname)                         %>%
+  summarize(nUnitName = sum(n, na.rm=TRUE))  %>%
+  ungroup()  
+
+nrow(unitNameCounts)
+```
+
+```{r}
+unitNameCounts %>%
+  Show()
+```
+
+```{r, comment=NA}
+sum(unitNameCounts$nUnitName)
+```
+
+## Item Param Type
+
+```{r, comment=NA}
+paramTypeCounts <-
+  chartItemCounts                             %>%
+  group_by(param_type)                        %>%
+  summarize(nParamType = sum(n, na.rm=TRUE))  %>%
+  ungroup()  
+
+nrow(paramTypeCounts)
+```
+
+```{r}
+paramTypeCounts %>%
+  Show()
+```
+
+```{r, comment=NA}
+sum(paramTypeCounts$nParamType)
+```
+
+## Item units by param type
+
+````{r, comment=NA}
+unitParamCounts <-
+  chartItemCounts                             %>%
+  group_by(unitname, param_type)              %>%
+  summarize(n = sum(n, na.rm=TRUE))           %>%
+  ungroup()       %>%
+  spread(param_type, n, fill=0)
+
+nrow(unitParamCounts)
+```
+
+```{r}
+unitParamCounts %>% Show()
+```
+
+## Item dbsource
+
+[dbsouce info](https://mimic.physionet.org/mimictables/d_items/).
+
+Philips CareVue or MDSOft MetaVision systems\?
+
+Jen J Gong, et al, [Predicting Clinical Outcomes Across Changing Electronic
+Health Record Systems](http://tjn.mit.edu/pdf/gong_naumann_kdd2017.pdf), KDD 2017 Applied Data Science Paper, Aug. 2017:  *This data spans two EHR versions, CareVue (2001–2008)
+and MetaVision (2008–2012). There are approximately 9,000 items
+specific to CareVue and approximately 3,000 items specific to the
+MetaVision data.*
+
+From [online info](https://mimic.physionet.org/mimictables/d_items/):
+
+*D_ITEMS is sourced from two distinct ICU databases. The main consequence is that there are duplicate ITEMID for each concept. For example, heart rate is captured both as an ITEMID of 211 (CareVue) and as an ITEMID of 220045 (Metavision). As a result, it is necessary to search for multiple ITEMID to capture a single concept across the entire database.*
+
+*Another source of duplicate ITEMID is due to the free text nature of data entry in CareVue - as a result there are additional ITEMID which correspond to misspellings or synonymous descriptions of a single concept. It is important to search for all possible abbreviations and descriptions of a concept to capture all associated ITEMID.*
+
+```{r}
+chartItemCounts                              %>%
+  group_by(dbsource)                         %>%
+  summarize(ndbSource = sum(n, na.rm=TRUE))  %>%
+  ungroup()                                  %>%
+  Show()
+```
+
+## Item linksto
+
+[linksto info](https://mimic.physionet.org/mimictables/d_items/).
+
+*LINKSTO provides the table name which the data links to. For example, a value of ‘chartevents’ indicates that the ITEMID of the given row is contained in CHARTEVENTS. A single ITEMID is only used in one event table, that is, if an ITEMID is contained in CHARTEVENTS it will not be contained in any other event table (e.g. IOEVENTS, CHARTEVENTS, etc).*
+
+*If the LINKSTO column is null, then the data is currently unavailable, but planned for a future release.*
+
+```{r}
+chartItemCounts                            %>%
+  group_by(linksto)                        %>%
+  summarize(nLinksTo = sum(n, na.rm=TRUE)) %>%
+  ungroup()                                %>%
+  Show()
+```
+
+## Item conceptid
+
+field has no information
+
+```{r}
+chartItemCounts                              %>%
+  group_by(conceptid)                        %>%
+  summarize(nConceptID = sum(n, na.rm=TRUE)) %>%
+  ungroup()                                  %>%
+  Show()
+```
+
+## Chart Event Warning
+
+```{r, comment=NA}
+factChartEvents   %>%
+  count(warning)  %>%
+  Show()
+```
+
+## Chart Event Error
+
+```{r, comment=NA}
+factChartEvents  %>%
+  count(error)   %>%
+  Show()
+```
+
+## Chart Event Result Status
+
+```{r}
+factChartEvents        %>%
+  count(resultstatus)  %>%
+  Show()
+```
+
+## Chart Event Stopped
+
+```{r}
+factChartEvents   %>%
+  count(stopped)  %>%
+  Show()
+```
+
+**Close Database**
+
+```{r, comment=NA}
+dbDisconnect(MimicDB)
+```
+
+*****
+
+```{r, comment=NA, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", 
+                        sprintf("%.1f",
+                                as.numeric(difftime(time.2, time.1,
+                                                    units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
