@@ -1,0 +1,244 @@
+---
+title: "MIMIC-III labevents table -- nearly 28 million records"
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+---
+
+<style type="text/css">
+div#TOC li {
+    list-style:none;
+    background-image:none;
+    background-repeat:none;
+    background-position:0; 
+}
+</style>
+
+efg | 2019-01-26
+
+# labevents table
+
+Online [info about the labevents table](https://mimic.physionet.org/mimictables/labevents/).  The [schema](https://mit-lcp.github.io/mimic-schema-spy/tables/labevents.html) shows the related tables.
+
+From the online info:
+
+*The LABEVENTS data contains information regarding laboratory based measurements. The process for acquiring a lab measurement is as follows: first, a member of the clinical staff acquires a fluid from a site in the patient’s body (e.g. blood from an arterial line, urine from a catheter, etc). Next, the fluid is bar coded to associate it with the patient and timestamped to record the time of the fluid acquisition. The lab analyses the data and returns a result within 4-12 hours.*
+
+*Note that the time associated with this result is the time of the fluid acquisition, not the time that the values were made available to the clinical staff.*
+
+*The labevents table contains both in-hospital laboratory measurements and out of hospital laboratory measurements from clinics which the patient has visited (since the patient is not “in” a hospital when visiting a clinic, these patients often referred to as “outpatients” and the data is often called “outpatient” data).*
+
+**Laboratory measurements for outpatients do not have a HADM_ID.**
+
+*Some items are duplicated between the labevents and chartevents tables. In cases where there is disagreement between measurements, labevents should be taken as the ground truth.*
+
+# Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(cli.unicode = FALSE)
+time.1 <- Sys.time()
+```
+
+```{r, comment=NA}
+plotCaptionLeft  <- "MIMIC-III v1.4"
+plotCaptionRight <- paste("efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+## Packages 
+
+```{r, comment=NA}
+library(DBI)
+library(RPostgres)
+library(tidyverse)
+library(dbplyr, warn.conflicts=FALSE)
+library(kableExtra)
+library(ggplot2)
+library(writexl)
+```
+
+## Helper function
+
+```{r}
+Show <- function(data, caption=NULL)
+{
+  data                            %>%
+  kable("html", caption=caption)  %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"),
+                position = "left", full_width = FALSE)
+}
+```
+
+## Open database
+
+```{r, comment=NA}
+MimicDB <- dbConnect(RPostgres::Postgres(), 
+                     dbname   = "mimic",
+                     user     = Sys.getenv("MIMIC_User"),
+                     password = Sys.getenv("MIMIC_Password"),
+                     bigint   = "integer",                      # RPostgres
+                     options  = "-c search_path=mimiciii")  
+
+factLabEvents <- tbl(MimicDB, in_schema("mimiciii", "labevents"))
+
+factAdmissions  <- tbl(MimicDB, in_schema("mimiciii", "admissions"))
+factPatients    <- tbl(MimicDB, in_schema("mimiciii", "patients"))
+
+dimLabItems     <- tbl(MimicDB, in_schema("mimiciii", "d_labitems"))
+```
+
+# Sample records
+
+## Lab Events Fact
+
+```{r}
+factLabEvents  %>%
+  head()       %>%
+  Show()
+```
+
+## Lab Items Dimension
+
+```{r}
+dimLabItems  %>%
+  head()     %>%
+  Show()
+```
+
+# Record Counts
+
+## Lab Events Fact
+
+```{r, comment=NA}
+factLabEvents  %>%
+  count()      %>%
+  Show()
+```
+
+## Lab Items Dimension
+
+```{r}
+dimLabItems                                   %>%
+  summarize(n  = n(),
+            nItemid = n_distinct(itemid),
+            nLOINC  = n_distinct(loinc_code),
+            nLabel  = n_distinct(label))      %>%
+  Show()
+```
+
+
+
+
+# Frequency Counts
+
+Join tables:  factLabEvents joined with dimLabItems 
+
+Some LOINCs have multiple units of measure, but sometimes units only vary by case.
+
+## Lab Events by LOINC
+
+itemid is unique.  loinc_code and label are not.
+
+```{r, comment=NA}
+labItemCounts <- 
+  factLabEvents                                   %>%
+  inner_join(dimLabItems, by = "itemid")          %>%
+  
+  group_by(loinc_code, itemid, label)             %>%
+  summarize(n = n(),
+            nUnits = n_distinct(valueuom))        %>%
+  ungroup()                                       %>%
+  
+  arrange(loinc_code, itemid)                     %>%
+  select(n, everything())                         %>%  
+  collect()
+  
+nrow(labItemCounts)
+```
+
+Most of the items in the dimension table were referenced.
+
+List of items in dimension table not mentioned in fact table.
+
+```{r}
+notReferenced <-
+  dimLabItems                              %>%
+  anti_join(labItemCounts, by = "itemid",
+            copy = TRUE)                   %>%
+  collect()
+
+nrow(notReferenced)
+```
+
+```{r}
+notReferenced  %>%
+  Show()
+```
+
+Write to file for further study.
+
+```{r}
+write_xlsx(labItemCounts, "Lab-Event-Item-Counts.xlsx")
+```
+
+## Top 25 lab events by item count
+
+```{r}
+labItemCounts        %>%
+  arrange(desc(n))   %>%
+  head(25)           %>%
+  Show()
+```
+
+## Lab events with multiple units of measure
+
+```{r}
+multipleUnits <- 
+  labItemCounts       %>%
+  filter(nUnits > 1)  
+
+nrow(multipleUnits)
+```
+
+```{r}
+multipleUnits  %>%
+  Show()
+```
+
+## Lab item LOINC counts
+
+```{r, comment=NA}
+LOINCCounts <-
+  labItemCounts                           %>%
+  group_by(loinc_code)                    %>%
+  summarize(nLOINC = sum(n, na.rm=TRUE))  %>%
+  ungroup()  
+
+nrow(LOINCCounts)
+```
+
+```{r}
+write_xlsx(LOINCCounts, "Lab-Event-LOINC-Counts.xlsx")
+```
+
+**Close Database**
+
+```{r, comment=NA}
+dbDisconnect(MimicDB)
+```
+
+*****
+
+```{r, comment=NA, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", 
+                        sprintf("%.1f",
+                                as.numeric(difftime(time.2, time.1,
+                                                    units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
