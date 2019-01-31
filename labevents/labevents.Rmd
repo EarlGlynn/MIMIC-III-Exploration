@@ -144,16 +144,18 @@ itemid is unique.  loinc_code and label are not.
 
 ```{r, comment=NA}
 labItemCounts <- 
-  factLabEvents                                   %>%
-  inner_join(dimLabItems, by = "itemid")          %>%
+  factLabEvents                                      %>%
+  inner_join(dimLabItems, by = "itemid")             %>%
   
-  group_by(loinc_code, itemid, label)             %>%
-  summarize(n = n(),
-            nUnits = n_distinct(valueuom))        %>%
-  ungroup()                                       %>%
+  group_by(loinc_code, itemid, label)                %>%
+  summarize(n        = n(),
+            nUnits   = n_distinct(valueuom),
+            Units    = str_flatten(distinct(valueuom), 
+                                 collapse="|"))      %>%
+  ungroup()                                          %>%
   
-  arrange(loinc_code, itemid)                     %>%
-  select(n, everything())                         %>%  
+  arrange(loinc_code, itemid)                        %>%
+  select(n, everything())                            %>%  
   collect()
   
 nrow(labItemCounts)
@@ -208,21 +210,81 @@ multipleUnits  %>%
   Show()
 ```
 
-## Lab item LOINC counts
+```{r}
+write_xlsx(multipleUnits, "Lab-Event-Multiple-Units.xlsx")
+```
 
-```{r, comment=NA}
-LOINCCounts <-
-  labItemCounts                           %>%
-  group_by(loinc_code)                    %>%
-  summarize(nLOINC = sum(n, na.rm=TRUE))  %>%
-  ungroup()  
+# Unit conversion issues
 
-nrow(LOINCCounts)
+```{r}
+targetLab <- 
+  factLabEvents                           %>%
+  inner_join(dimLabItems, by = "itemid")  %>%
+  select(-starts_with("row_id."))         %>%
+  
+  filter(itemid == 50804)                 %>%
+  collect()
+  
+  
+nrow(targetLab)
 ```
 
 ```{r}
-write_xlsx(LOINCCounts, "Lab-Event-LOINC-Counts.xlsx")
+targetLab  %>%
+  head(3)  %>%
+  Show()
 ```
+
+```{r}
+targetLab                                                                 %>%
+  summarize(nNumber = sum( sapply(valuenum, FUN=is.numeric), na.rm=TRUE)) %>%
+  Show()
+```
+
+```{r}
+counts <- table(targetLab$valueuom, useNA = "ifany")
+facetName <- paste0(names(counts), " [", counts, "]")
+facetName
+```
+
+```{r}
+variable_labeller <- function(variable, value)
+{
+  return(paste("Units = ", facetName[value]))
+}
+```
+
+```{r, fig.width=8, fig.height=6}
+ggplot(targetLab, aes(x = valuenum, y = ..density..))              +
+    geom_histogram(fill="cornsilk", color="grey80", bins = 100)    +
+    geom_density()                                                 +
+    xlim(0, quantile(targetLab$valuenum, 1.00, na.rm=TRUE))        +
+    labs(title=paste0("MIMIC-III Lab Event: ", targetLab$label),
+         subtitle = paste0("Category: ", targetLab$category[1],
+                           ", Fluid: ",  targetLab$fluid[1],
+                           ", LOINC: ",  targetLab$loinc_code[1]),
+         x = targetLab$label,
+         caption=c(plotCaptionLeft, plotCaptionRight))             +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))          
+```
+
+```{r, fig.width=8, fig.height=8}
+ggplot(targetLab, aes(x = valuenum, y = ..density..))              +
+    geom_histogram(fill="cornsilk", color="grey80", bins = 100)    +
+    geom_density()                                                 +
+    xlim(0, quantile(targetLab$valuenum, 0.99, na.rm=TRUE))        +
+    labs(title=paste0("MIMIC-III Lab Event: ", targetLab$label),
+         subtitle = paste0("Category: ", targetLab$category[1],
+                           ", Fluid: ",  targetLab$fluid[1],
+                           ", LOINC: ",  targetLab$loinc_code[1]),
+         x = targetLab$label,
+         caption=c(plotCaptionLeft, plotCaptionRight))             +
+    theme(plot.caption = element_text(hjust=c(0.0,1.0)))           +
+    facet_wrap(~valueuom, 
+               nrow=length(counts),
+               labeller = as_labeller(variable_labeller))
+```
+
 
 **Close Database**
 
