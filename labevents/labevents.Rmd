@@ -17,7 +17,7 @@ div#TOC li {
 }
 </style>
 
-efg | 2019-01-26
+efg | 2019-01-31
 
 # labevents table
 
@@ -120,27 +120,87 @@ factLabEvents  %>%
 
 ## Lab Items Dimension
 
+Categories exist in both upper and lower case versions, so let's make them all lower case.
+
+Several fluid names apper in upper and mixed case versions.  Let's use lower case.
+
+Only 2 of the 589 labels have case variations, so let's leave those alone for now.
+
 ```{r}
 dimLabItems                                   %>%
+  mutate(category = str_to_lower(category),
+         fluid    = str_to_lower(fluid))      %>% 
   summarize(n  = n(),
-            nItemid = n_distinct(itemid),
-            nLOINC  = n_distinct(loinc_code),
-            nLabel  = n_distinct(label))      %>%
+            nItemid   = n_distinct(itemid),
+            nLOINC    = n_distinct(loinc_code),
+            nCategory = n_distinct(category),
+            nFluid    = n_distinct(fluid),
+            nLabel    = n_distinct(label))      %>%
   Show()
 ```
-
-
-
 
 # Frequency Counts
 
 Join tables:  factLabEvents joined with dimLabItems 
 
-Some LOINCs have multiple units of measure, but sometimes units only vary by case.
+## Category Summary
 
-## Lab Events by LOINC
+```{r, comment=NA}
+factLabEvents                                 %>%
+  inner_join(dimLabItems, by = "itemid")      %>%
+  mutate(category = str_to_lower(category),
+         fluid    = str_to_lower(fluid))      %>% 
+  group_by(category)                          %>%
+  summarize(n      = n(),                     
+            nFluid = n_distinct(fluid),
+            nLOINC = n_distinct(loinc_code),
+            nLabel = n_distinct(label))       %>%
+ ungroup()                                    %>%
+ collect()                                    %>%
+ Show()
+```
+
+## Fluid Summary
+
+```{r, comment=NA}
+factLabEvents                                    %>%
+  inner_join(dimLabItems, by = "itemid")         %>%
+  mutate(category = str_to_lower(category),
+         fluid    = str_to_lower(fluid))         %>% 
+  group_by(fluid)                                %>%
+  summarize(n      = n(),                     
+            nCategory = n_distinct(category),
+            nLOINC    = n_distinct(loinc_code),
+            nLabel    = n_distinct(label))       %>%
+ ungroup()                                       %>%
+ collect()                                       %>%
+ Show()
+```
+
+## Category-Fluid Combinations
+
+```{r, comment=NA}
+factLabEvents                                 %>%
+  inner_join(dimLabItems, by = "itemid")      %>%
+  mutate(category = str_to_lower(category),
+         fluid    = str_to_lower(fluid))      %>% 
+  group_by(category, fluid)                   %>%
+  summarize(n      = n(),                     
+            nLOINC = n_distinct(loinc_code),
+            nLabel = n_distinct(label))       %>%
+ ungroup()                                    %>%
+ arrange(category, fluid)                     %>%
+ collect()                                    %>%
+ Show()
+```
+
+## LOINC
+
+[What LOINC is](https://loinc.org/get-started/what-loinc-is/)
 
 itemid is unique.  loinc_code and label are not.
+
+Some LOINCs have multiple units of measure.
 
 ```{r, comment=NA}
 labItemCounts <- 
@@ -217,12 +277,16 @@ write_xlsx(multipleUnits, "Lab-Event-Multiple-Units.xlsx")
 # Unit conversion issues
 
 ```{r}
+targetItemID <- 50964    # Osmolality, Measured
+```
+
+```{r}
 targetLab <- 
   factLabEvents                           %>%
   inner_join(dimLabItems, by = "itemid")  %>%
   select(-starts_with("row_id."))         %>%
   
-  filter(itemid == 50804)                 %>%
+  filter(itemid == targetItemID)          %>%
   collect()
   
   
@@ -230,8 +294,9 @@ nrow(targetLab)
 ```
 
 ```{r}
-targetLab  %>%
-  head(3)  %>%
+targetLab    %>%
+  head(3)    %>%
+  collect()  %>%
   Show()
 ```
 
@@ -240,6 +305,15 @@ targetLab                                                                 %>%
   summarize(nNumber = sum( sapply(valuenum, FUN=is.numeric), na.rm=TRUE)) %>%
   Show()
 ```
+
+Eventually color by flag
+
+```{r}
+targetLab      %>%
+  count(flag)  %>%
+  Show()
+```
+
 
 ```{r}
 counts <- table(targetLab$valueuom, useNA = "ifany")
@@ -256,10 +330,10 @@ variable_labeller <- function(variable, value)
 
 ```{r, fig.width=8, fig.height=6}
 ggplot(targetLab, aes(x = valuenum, y = ..density..))              +
-    geom_histogram(fill="cornsilk", color="grey80", bins = 100)    +
+    geom_histogram(fill="cornsilk", color="grey80")                +
     geom_density()                                                 +
     xlim(0, quantile(targetLab$valuenum, 1.00, na.rm=TRUE))        +
-    labs(title=paste0("MIMIC-III Lab Event: ", targetLab$label),
+    labs(title=paste0("Lab Event: ", targetLab$label),
          subtitle = paste0("Category: ", targetLab$category[1],
                            ", Fluid: ",  targetLab$fluid[1],
                            ", LOINC: ",  targetLab$loinc_code[1]),
@@ -270,10 +344,10 @@ ggplot(targetLab, aes(x = valuenum, y = ..density..))              +
 
 ```{r, fig.width=8, fig.height=8}
 ggplot(targetLab, aes(x = valuenum, y = ..density..))              +
-    geom_histogram(fill="cornsilk", color="grey80", bins = 100)    +
+    geom_histogram(fill="cornsilk", color="grey80")                +
     geom_density()                                                 +
-    xlim(0, quantile(targetLab$valuenum, 0.99, na.rm=TRUE))        +
-    labs(title=paste0("MIMIC-III Lab Event: ", targetLab$label),
+    xlim(0, quantile(targetLab$valuenum, 1.00, na.rm=TRUE))        +
+    labs(title=paste0("Lab Event: ", targetLab$label),
          subtitle = paste0("Category: ", targetLab$category[1],
                            ", Fluid: ",  targetLab$fluid[1],
                            ", LOINC: ",  targetLab$loinc_code[1]),
