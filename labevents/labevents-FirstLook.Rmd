@@ -1,0 +1,535 @@
+---
+title: "MIMIC-III labevents table -- First Look"
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+  html_notebook:
+    toc: yes
+---
+
+<style type="text/css">
+div#TOC li {
+    list-style:none;
+    background-image:none;
+    background-repeat:none;
+    background-position:0; 
+}
+</style>
+
+efg | 2019-02-16
+
+# Purpose
+
+This project aims to identify problem data items in the `labevent` fact table as well as the `d_labitems` dimension table in the MIMIC-III database, and to create recoding that fixes them. This involves a mechanical look at the data fields without a serious attempt to understand the meaning of the data.
+
+Future projects will summarize the fixed data.
+
+# Background
+
+Online [info about the labevents table](https://mimic.physionet.org/mimictables/labevents/).  
+
+The [schema](https://mit-lcp.github.io/mimic-schema-spy/tables/labevents.html) shows the related tables.
+
+# Exploration
+
+## Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(cli.unicode = FALSE)
+time.1 <- Sys.time()
+```
+
+```{r, comment=NA}
+plotCaptionLeft  <- "MIMIC-III v1.4"
+plotCaptionRight <- paste("efg", format(Sys.time(), "%Y-%m-%d"))
+```
+
+### Packages 
+
+```{r, comment=NA}
+library(DBI)
+library(RPostgres)
+library(tidyverse)
+library(dbplyr, warn.conflicts=FALSE)
+library(kableExtra)
+library(ggplot2)
+library(writexl)
+```
+
+### Helper function
+
+```{r}
+Show <- function(data, caption="", bigMark="")
+{
+  data                                          %>%
+  kable("html", 
+        caption=caption,
+        format.args = list(big.mark=bigMark))   %>%
+  kable_styling(bootstrap_options = c("striped", "bordered", "condensed"),
+                position = "left", full_width = FALSE)
+}
+```
+
+### MIMIC-III database
+
+```{r, comment=NA}
+MimicDB <- dbConnect(RPostgres::Postgres(), 
+                     dbname   = "mimic",
+                     user     = Sys.getenv("MIMIC_User"),
+                     password = Sys.getenv("MIMIC_Password"),
+                     bigint   = "integer",                      # RPostgres
+                     options  = "-c search_path=mimiciii") 
+```
+
+Database tables
+
+```{r}
+factLabEvents <- tbl(MimicDB, in_schema("mimiciii", "labevents"))
+dimLabItems   <- tbl(MimicDB, in_schema("mimiciii", "d_labitems"))
+```
+
+## Lab Events Fact
+
+### Sample Records
+
+```{r}
+factLabEvents  %>%
+  head()       %>%
+  Show()
+```
+
+### Record Counts
+
+```{r, comment=NA}
+factLabEvents                                    %>%
+  mutate(upperUnits = str_to_upper(valueuom))    %>%
+  summarize(
+             n           = n(),
+             nRow        = n_distinct(row_id),
+             nSubject    = n_distinct(subject_id),
+             nHadm       = n_distinct(hadm_id),
+             nItem       = n_distinct(itemid),
+             nCharttime  = n_distinct(charttime),
+             nValue      = n_distinct(value),
+             nValuenum   = n_distinct(valuenum),
+             nValueuom   = n_distinct(valueuom),
+             nUpperUnits = n_distinct(upperUnits),
+             nFlag       = n_distinct(flag)
+           )                                     %>%
+  Show(bigMark = ",")
+```
+
+When `nUpperUnits` < `nValueuom`, some of the units differ by case.
+
+Note the `n_distinct` counts performed on the database ignore nulls.  For example, there are really 3 `flag` states instead of the 2 shown above:
+
+```{r}
+factLabEvents     %>%
+  group_by(flag)  %>%
+  count           %>%
+  ungroup()       %>%
+  Show(bigMark = ",")
+```
+
+Below we will find that if the data are brought into R first, the distinct `flag` count is 3 as expected.
+
+### Unit differences by case
+
+```{r, comment=NA}
+lookForMultipleVersions <-
+  factLabEvents                                  %>%
+  collect()                                      %>% # use R, not DB for str_flatten below
+  mutate(upperUnits = str_to_upper(valueuom))    %>%
+  group_by(upperUnits)                           %>%
+  summarize(n             = n(),
+            nValueuom     = n_distinct(valueuom),
+            unitVariation = str_flatten(unique(valueuom), 
+                                        collapse = " | "))  %>%
+  ungroup()                                      
+ 
+nrow(lookForMultipleVersions)
+```
+
+Identify variation in units of measure for given upperUnits.
+
+```{r}
+problemUnits <-
+  lookForMultipleVersions  %>%
+  filter(nValueuom > 1)
+
+problemUnits  %>%
+  Show()
+```
+
+```{r}
+write_xlsx(problemUnits, "Problem-Units.xlsx")
+```
+
+### Use majority vote to pick preferred unit label
+
+Look at counts for variations in units and let's pick "majority vote"" for preferred case
+
+```{r, comment=NA}
+voteScores <-
+  factLabEvents                                        %>%
+  mutate(upperUnits = str_to_upper(valueuom))          %>%
+  filter(upperUnits %in% lookForMultipleVersions$upperUnits)  %>%
+  group_by(upperUnits, valueuom)                       %>%
+  count()                                              %>%
+  ungroup()                                            %>%
+  collect()
+
+nrow(voteScores)
+```
+
+Show the "votes" for the problem cases
+
+```{r}
+problemUnits                                 %>%
+  inner_join(voteScores, by = "upperUnits")  %>%
+  rename(nUpper = n.x, n = n.y)              %>%
+  Show()
+```
+
+[How to select the rows with maximum values in each group with dplyr?](https://stackoverflow.com/questions/24237399/how-to-select-the-rows-with-maximum-values-in-each-group-with-dplyr)
+
+Probably should worry about ties here?  Do that later.
+
+```{r, comment=NA}
+preferredUnits <-
+  voteScores            %>%
+  group_by(upperUnits)  %>%
+  slice(which.max(n))   %>%
+  rename(PreferredUnit = valueuom)
+
+nrow(preferredUnits)
+```
+
+### Setup translate table
+
+```{r, comment=NA}
+translateUnits <-
+  voteScores       %>%
+  select(-n)       %>%
+  inner_join(preferredUnits, 
+             by = "upperUnits")   %>%
+  select(-n)
+
+nrow(translateUnits)
+```
+
+```{r}
+write_xlsx(translateUnits, "Translate-Units.xlsx")
+```
+
+Results for problem units
+
+```{r}
+problemUnits         %>%
+  inner_join(translateUnits, by = "upperUnits") %>%
+  select(-valueuom)  %>%
+  distinct()         %>%
+  Show()
+```
+
+Verify translate table removes unit case differences.
+
+Use `left_join` here to preserve NULLs in units.
+
+```{r, comment=NA}
+factLabEvents                                    %>%
+  left_join(translateUnits, 
+            by = "valueuom",
+            copy = TRUE)                         %>%
+  rename(Units = PreferredUnit)                  %>%
+  summarize(
+             n           = n(),
+             nRow        = n_distinct(row_id),
+             nSubject    = n_distinct(subject_id),
+             nHadm       = n_distinct(hadm_id),
+             nItem       = n_distinct(itemid),
+             nCharttime  = n_distinct(charttime),
+             nValue      = n_distinct(value),
+             nValuenum   = n_distinct(valuenum),
+             nValueuom   = n_distinct(valueuom),
+             nUnits      = n_distinct(Units),
+             nFlag       = n_distinct(flag)
+           )                                     %>%
+  Show(bigMark = ",")
+```
+
+Here `nUnits` should match the original `nUpperUnits` value.
+
+### Recoding to fix problems
+
+Use dplyr's `mutate` to fix unit problems instead of a translate table.
+
+```{r, comment=NA}
+fixedLabEvents <- 
+  factLabEvents                                  %>%
+  collect()                                      %>%
+  
+  mutate(
+          valueuom = recode(valueuom,
+                            "MEQ/L"   = "mEq/L",
+                            "MG/DL"   = "mg/dL",
+                            "MM HG"   = "mm Hg",
+                            "MOSM/KG" = "mOsm/kg",
+                            "ng/dl"   = "ng/dL",
+                            "NG/DL"   = "ng/dL",
+                            "ng/ml"   = "ng/mL",
+                            "nG/mL"   = "ng/mL",
+                            "nG/ML"   = "ng/mL",
+                            "RATIO"   = "Ratio",
+                            "uG/DL"   = "ug/dL",
+                            "ug/ml"   = "ug/mL",
+                            "UNITS"   = "units"
+                           )
+        )                                        %>%
+  
+  mutate(upperUnits = str_to_upper(valueuom)) 
+```
+
+Verify fix
+
+```{r}
+fixedLabEvents                                   %>%
+  summarize(
+             n           = n(),
+             nRow        = n_distinct(row_id),
+             nSubject    = n_distinct(subject_id),
+             nHadm       = n_distinct(hadm_id),
+             nItem       = n_distinct(itemid),
+             nCharttime  = n_distinct(charttime),
+             nValue      = n_distinct(value),
+             nValuenum   = n_distinct(valuenum),
+             nValueuom   = n_distinct(valueuom),
+             nUpperUnits = n_distinct(upperUnits),
+             nFlag       = n_distinct(flag)
+           )                                     %>%      
+  Show(bigMark = ",")
+```
+
+Since `nValueuom` = `nUpperUnits`, there are no longer any unit differences based on case.
+
+The distinct counts for `nHadm`, `nValue`, `nValuenum` and `nFlag` are all one greater here than the initial count shown above, since `n_distinct` on an R table includes NULL (NA) as one of the distinct values.
+
+```{r}
+fixedLabEvents    %>%
+  group_by(flag)  %>%
+  count           %>%
+  ungroup()       %>%
+  Show(bigMark = ",")
+```
+
+## Lab Items Dimension
+
+### Sample Records
+
+Sample records
+
+```{r}
+dimLabItems  %>%
+  head()     %>%
+  Show()
+```
+
+### Record Counts
+
+```{r}
+dimLabItems                                   %>%
+  summarize(n  = n(),
+            nItemid   = n_distinct(itemid),
+            nLOINC    = n_distinct(loinc_code),
+            nCategory = n_distinct(category),
+            nFluid    = n_distinct(fluid),
+            nLabel    = n_distinct(label))      %>%
+  Show()
+```
+
+### category problems
+
+```{r}
+dimLabItems           %>%
+  group_by(category)  %>%
+  count()             %>%
+  ungroup()           %>%
+  arrange(category)   %>%
+  Show()
+```
+
+### fluid problems
+
+```{r}
+dimLabItems        %>%
+  group_by(fluid)  %>%
+  count()          %>%
+  ungroup()        %>%
+  arrange(fluid)   %>%
+  Show()
+```
+
+### label problems
+
+```{r}
+dimLabItems                                 %>%
+  collect()                                 %>% # let R do heavy lifting
+  mutate(upperLabel = str_to_upper(label))  %>% 
+  
+  group_by(upperLabel)                      %>%
+  summarize(n      = n(),
+            nLabel = n_distinct(label),
+            labels = str_flatten(unique(label), 
+                                 collapse = " | "))   %>%
+  ungroup()                                 %>%
+  
+  filter(nLabel > 1)                        %>%          
+  Show()
+```
+
+### Duplicate LOINCs?
+
+Not all labs are assigned LOINCs
+
+```{r}
+duplicateLOINCs <-
+  dimLabItems           %>%
+  group_by(loinc_code)  %>%
+  count()               %>%
+  ungroup()             %>%
+  filter(n > 1)         %>%
+  arrange(loinc_code)
+
+duplicateLOINCs  %>%
+  Show()
+```
+
+```{r}
+dimLabItems                                       %>%
+  inner_join(duplicateLOINCs, by = "loinc_code")  %>%
+  select(-n)                                      %>%
+  Show()
+```
+
+Explore later if lab items with same LOINCs can be safely combined, and what can be done with lab items missing LOINCs.
+
+### Recoding to fix problems
+
+```{r}
+fixedLabItems <-
+  dimLabItems  %>% 
+  collect()    %>%  # Use R for the fixes                            
+  
+  mutate(
+          category = recode(category,
+                            "BLOOD GAS"  = "Blood Gas",
+                            "CHEMISTRY"  = "Chemistry",
+                            "HEMATOLOGY" = "Hematology"
+                           )
+        )                                      %>%
+  
+  mutate(
+         fluid = recode(fluid,
+                        "ASCITES"          = "Ascites",
+                        "BLOOD"            = "Blood",
+                        "CSF"              = "Cerebrospinal Fluid (CSF)",
+                        "JOINT FLUID"      = "Joint Fluid",
+                        "OTHER BODY FLUID" = "Other Body Fluid",
+                        "STOOL"            = "Stool",
+                        "URINE"            = "Urine"
+                       )
+        )                                      %>%
+  
+  # TdT is Terminal deoxynucleotidyl Transferase 
+  mutate(
+         label = recode(label,
+                        "Mesothelial cells" = "Mesothelial Cells",
+                        "TDT"               = "TdT" 
+                       )
+    
+        )
+  
+## Verification
+
+fixedLabItems                                  %>%  
+  summarize(n  = n(),
+            nItemid   = n_distinct(itemid),
+            nLOINC    = n_distinct(loinc_code),
+            nCategory = n_distinct(category),
+            nFluid    = n_distinct(fluid),
+            nLabel    = n_distinct(label))    %>%   
+  Show()
+```
+
+Verify case problems are resolved.
+
+```{r}
+fixedLabItems     %>%
+  count(category) %>%
+  Show()
+```
+
+```{r}
+fixedLabItems  %>%
+  count(fluid) %>%
+  Show()
+```
+
+Verify no duplicate `label`s by case.
+
+```{r}
+fixedLabItems                               %>%
+  mutate(upperLabel = str_to_upper(label))  %>% 
+  
+  group_by(upperLabel)                      %>%
+  summarize(n      = n(),
+            nLabel = n_distinct(label),
+            labels = str_flatten(unique(label), 
+                                 collapse = " | "))   %>%
+  ungroup()                                 %>%
+  
+  filter(nLabel > 1)                        %>%          
+  Show()
+```
+
+**Close Database**
+
+```{r, comment=NA}
+dbDisconnect(MimicDB)
+```
+
+# Discussion
+
+Data cleanup is often easier in R than using database approaches, but memory limitations for R may force more processing on the database backend.
+
+`n_distinct` counts run on the database ignore NULLs, but when run on an in-memory tibble R includes NULL (NA) as a distinct value.
+
+
+# Conclusions
+
+"Majority" vote was useful to decide which case variant should be used as the preferred unit of measure.
+
+Several data fields need recoding as described above to use `labevents` in data summaries:
+
+* `valueuom` (value unit of measure) in the `labevents` has 13 values that should be recoded for consistency.
+
+*  Several values in the `label`,`category` and `fluid` fields in the `d_labitems` table should be recoded for consistency.
+
+Additional exploration of `itemid`s with the same LOINC is needed to verify if they can be combined as a single source of data.
+
+Additional exploration of 'itemid's without LOINC codes is needed to understand the utility of the data.
+
+*****
+
+```{r, comment=NA, echo=FALSE}
+time.2 <- Sys.time()
+processingTime <- paste("Processing time:", 
+                        sprintf("%.1f",
+                                as.numeric(difftime(time.2, time.1,
+                                                    units="secs"))), "secs\n")
+```
+
+`r processingTime`
+`r format(time.2, "%Y-%m-%d %H%M")`
