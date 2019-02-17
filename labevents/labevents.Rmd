@@ -17,9 +17,14 @@ div#TOC li {
 }
 </style>
 
-efg | 2019-01-31
+efg | 2019-02-16
 
-# labevents table
+
+# Purpose
+
+# Background
+
+Swapna Abhyankar et al, [Standardizing clinical laboratory data for secondary use](https://www.sciencedirect.com/science/article/pii/S1532046412000652), *Jouornal of Biomedical Informatics*, 45(2012) 642-650.
 
 Online [info about the labevents table](https://mimic.physionet.org/mimictables/labevents/).  The [schema](https://mit-lcp.github.io/mimic-schema-spy/tables/labevents.html) shows the related tables.
 
@@ -35,7 +40,13 @@ From the online info:
 
 *Some items are duplicated between the labevents and chartevents tables. In cases where there is disagreement between measurements, labevents should be taken as the ground truth.*
 
-# Setup
+An earlier project, [MIMIC-III labevents table – First Look](labevents-FirstLook.htm) identified duplicate codes by case in several fields and recoding to resolve the problems.  The recoding below is based on that exploration.
+
+[What LOINC is](https://loinc.org/get-started/what-loinc-is/).
+
+# Exploration
+
+## Setup
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -48,7 +59,7 @@ plotCaptionLeft  <- "MIMIC-III v1.4"
 plotCaptionRight <- paste("efg", format(Sys.time(), "%Y-%m-%d"))
 ```
 
-## Packages 
+### Packages 
 
 ```{r, comment=NA}
 library(DBI)
@@ -60,143 +71,209 @@ library(ggplot2)
 library(writexl)
 ```
 
-## Helper function
+### Helper function
 
 ```{r}
-Show <- function(data, caption=NULL)
+Show <- function(data, caption="", bigMark="")
 {
-  data                            %>%
-  kable("html", caption=caption)  %>%
+  data                                          %>%
+  kable("html", 
+        caption=caption,
+        format.args = list(big.mark=bigMark))   %>%
   kable_styling(bootstrap_options = c("striped", "bordered", "condensed"),
                 position = "left", full_width = FALSE)
 }
 ```
 
-## Open database
+### MIMIC-III database
 
 ```{r, comment=NA}
 MimicDB <- dbConnect(RPostgres::Postgres(), 
                      dbname   = "mimic",
                      user     = Sys.getenv("MIMIC_User"),
                      password = Sys.getenv("MIMIC_Password"),
-                     bigint   = "integer",                      # RPostgres
-                     options  = "-c search_path=mimiciii")  
-
-factLabEvents <- tbl(MimicDB, in_schema("mimiciii", "labevents"))
-
-factAdmissions  <- tbl(MimicDB, in_schema("mimiciii", "admissions"))
-factPatients    <- tbl(MimicDB, in_schema("mimiciii", "patients"))
-
-dimLabItems     <- tbl(MimicDB, in_schema("mimiciii", "d_labitems"))
+                     bigint   = "integer",                      
+                     options  = "-c search_path=mimiciii")
 ```
 
-# Sample records
-
-## Lab Events Fact
-
-```{r}
-factLabEvents  %>%
-  head()       %>%
-  Show()
-```
-
-## Lab Items Dimension
-
-```{r}
-dimLabItems  %>%
-  head()     %>%
-  Show()
-```
-
-# Record Counts
-
-## Lab Events Fact
+Database tables
 
 ```{r, comment=NA}
-factLabEvents  %>%
-  count()      %>%
-  Show()
+
+factLabEvents <- tbl(MimicDB, in_schema("mimiciii", "labevents"))
+dimLabItems   <- tbl(MimicDB, in_schema("mimiciii", "d_labitems"))
 ```
 
-## Lab Items Dimension
+### Recoding to fix case duplicates
 
-Categories exist in both upper and lower case versions, so let's make them all lower case.
+With 32 GB of memory, let's bring tables into R memory tibbles for manipulation.
 
-Several fluid names apper in upper and mixed case versions.  Let's use lower case.
+#### labevents
 
-Only 2 of the 589 labels have case variations, so let's leave those alone for now.
+```{r, comment=NA}
+fixedLabEvents <- 
+  factLabEvents                                  %>%
+  collect()                                      %>%
+  
+  mutate(
+          valueuom = recode(valueuom,
+                            "MEQ/L"   = "mEq/L",
+                            "MG/DL"   = "mg/dL",
+                            "MM HG"   = "mm Hg",
+                            "MOSM/KG" = "mOsm/kg",
+                            "ng/dl"   = "ng/dL",
+                            "NG/DL"   = "ng/dL",
+                            "ng/ml"   = "ng/mL",
+                            "nG/mL"   = "ng/mL",
+                            "nG/ML"   = "ng/mL",
+                            "RATIO"   = "Ratio",
+                            "SECONDS" = "sec",
+                            "uG/DL"   = "ug/dL",
+                            "ug/ml"   = "ug/mL",
+                            "UNITS"   = "units",
+                            .missing  = "<missing>"
+                           )
+        ) 
+
+dim(fixedLabEvents)
+```
+
+#### d_labitems
 
 ```{r}
-dimLabItems                                   %>%
-  mutate(category = str_to_lower(category),
-         fluid    = str_to_lower(fluid))      %>% 
-  summarize(n  = n(),
-            nItemid   = n_distinct(itemid),
-            nLOINC    = n_distinct(loinc_code),
-            nCategory = n_distinct(category),
-            nFluid    = n_distinct(fluid),
-            nLabel    = n_distinct(label))      %>%
-  Show()
+fixedLabItems <-
+  dimLabItems  %>% 
+  collect()    %>%  # Use R for the fixes                            
+  
+  mutate(
+          category = recode(category,
+                            "BLOOD GAS"  = "Blood Gas",
+                            "CHEMISTRY"  = "Chemistry",
+                            "HEMATOLOGY" = "Hematology"
+                           ),
+        
+         fluid = recode(fluid,
+                        "ASCITES"          = "Ascites",
+                        "BLOOD"            = "Blood",
+                        "CSF"              = "Cerebrospinal Fluid (CSF)",
+                        "JOINT FLUID"      = "Joint Fluid",
+                        "OTHER BODY FLUID" = "Other Body Fluid",
+                        "STOOL"            = "Stool",
+                        "URINE"            = "Urine"
+                       ),
+  
+         # TdT is Terminal deoxynucleotidyl Transferase 
+         label = recode(label,
+                        "Mesothelial cells" = "Mesothelial Cells",
+                        "TDT"               = "TdT" 
+                       )
+    
+        )
+
+nrow(fixedLabItems)
 ```
 
-# Frequency Counts
+## Many lab events are missing units of measure
 
-Join tables:  factLabEvents joined with dimLabItems 
+```{r}
+fixedLabEvents                               %>%
+  filter(valueuom == "<missing>")            %>%
+  count()                                    %>%
+  Show(bigMark = ",")
+```
+
+## LOINC missing or present?
+
+A number of lab events are missing LOINC values.
+
+```{r}
+ fixedLabEvents                              %>%
+  inner_join(fixedLabItems, by = "itemid")   %>%
+  mutate(loincPresent = ifelse(is.na(loinc_code), 
+                                     "LOINC missing",
+                                     "LOINC present"))  %>%
+  count(loincPresent)                        %>%
+  Show(bigMark = ",")
+```
+
+For now, let's create additional summaries below, but be aware that one of the "distinct" LOINC values is likely a missing value.
 
 ## Category Summary
 
+Join tables:  `factLabEvents` joined with `dimLabItems`
+
 ```{r, comment=NA}
-factLabEvents                                 %>%
-  inner_join(dimLabItems, by = "itemid")      %>%
-  mutate(category = str_to_lower(category),
-         fluid    = str_to_lower(fluid))      %>% 
+categorySummary <-
+  fixedLabEvents                              %>%
+  inner_join(fixedLabItems, by = "itemid")    %>%
+
   group_by(category)                          %>%
   summarize(n      = n(),                     
             nFluid = n_distinct(fluid),
             nLOINC = n_distinct(loinc_code),
             nLabel = n_distinct(label))       %>%
- ungroup()                                    %>%
- collect()                                    %>%
- Show()
+  ungroup()  
+
+categorySummary    %>%
+  Show(bigMark = ",")
 ```
 
 ## Fluid Summary
 
 ```{r, comment=NA}
-factLabEvents                                    %>%
-  inner_join(dimLabItems, by = "itemid")         %>%
-  mutate(category = str_to_lower(category),
-         fluid    = str_to_lower(fluid))         %>% 
+fluidSummary <-
+  fixedLabEvents                                  %>%
+  inner_join(fixedLabItems, by = "itemid")        %>%
+  
   group_by(fluid)                                %>%
   summarize(n      = n(),                     
             nCategory = n_distinct(category),
             nLOINC    = n_distinct(loinc_code),
             nLabel    = n_distinct(label))       %>%
- ungroup()                                       %>%
- collect()                                       %>%
- Show()
+  ungroup()
+
+fluidSummary   %>%
+ Show(bigMark = ",")
 ```
 
-## Category-Fluid Combinations
+## Fluid-Category Combinations
 
 ```{r, comment=NA}
-factLabEvents                                 %>%
-  inner_join(dimLabItems, by = "itemid")      %>%
-  mutate(category = str_to_lower(category),
-         fluid    = str_to_lower(fluid))      %>% 
-  group_by(category, fluid)                   %>%
-  summarize(n      = n(),                     
-            nLOINC = n_distinct(loinc_code),
-            nLabel = n_distinct(label))       %>%
- ungroup()                                    %>%
- arrange(category, fluid)                     %>%
- collect()                                    %>%
- Show()
+fluidCategoryCombos <-
+  fixedLabEvents                              %>%
+  inner_join(fixedLabItems, by = "itemid")    %>%
+  group_by(fluid, category)                   %>%
+  count()                                     %>%
+  ungroup()                                   %>%
+  spread(category, n, fill = 0)               %>%
+  arrange(fluid)                              %>%
+  mutate(LabEvents = rowSums(.[-1], na.rm=TRUE))
 ```
 
-## LOINC
+Add Column Totals
 
-[What LOINC is](https://loinc.org/get-started/what-loinc-is/)
+```{r, comment=NA}
+fluidCategoryCombos <- 
+  bind_rows(fluidCategoryCombos,
+            bind_cols(fluid = "TOTAL",
+                      fluidCategoryCombos %>%
+                        summarize_if(is.numeric, sum, na.rm = TRUE)))
+```
+
+
+```{r, comment=NA}
+
+fluidCategoryCombos   %>%
+  Show(bigMark = ",")
+```
+
+```{r}
+write_xlsx(fluidCategoryCombos , "Lab-Event-Fluid-Category-Counts.xlsx")
+```
+
+View [Lab-Event-Fluid-Category-Counts.xlsx](Lab-Event-Fluid-Category-Counts.xlsx).
+
+## Items and LOINCs
 
 itemid is unique.  loinc_code and label are not.
 
@@ -204,13 +281,13 @@ Some LOINCs have multiple units of measure.
 
 ```{r, comment=NA}
 labItemCounts <- 
-  factLabEvents                                      %>%
-  inner_join(dimLabItems, by = "itemid")             %>%
+  fixedLabEvents                                     %>%
+  inner_join(fixedLabItems, by = "itemid")           %>%
   
   group_by(loinc_code, itemid, label)                %>%
   summarize(n        = n(),
             nUnits   = n_distinct(valueuom),
-            Units    = str_flatten(distinct(valueuom), 
+            Units    = str_flatten(unique(valueuom), 
                                  collapse="|"))      %>%
   ungroup()                                          %>%
   
@@ -227,7 +304,7 @@ List of items in dimension table not mentioned in fact table.
 
 ```{r}
 notReferenced <-
-  dimLabItems                              %>%
+  fixedLabItems                            %>%
   anti_join(labItemCounts, by = "itemid",
             copy = TRUE)                   %>%
   collect()
@@ -236,7 +313,8 @@ nrow(notReferenced)
 ```
 
 ```{r}
-notReferenced  %>%
+notReferenced                      %>%
+  arrange(fluid, category, label)  %>%
   Show()
 ```
 
@@ -246,7 +324,9 @@ Write to file for further study.
 write_xlsx(labItemCounts, "Lab-Event-Item-Counts.xlsx")
 ```
 
-## Top 25 lab events by item count
+View [Lab-Event-Item-Counts.xlsx](Lab-Event-Item-Counts.xlsx).
+
+### Top 25 lab events by item count
 
 ```{r}
 labItemCounts        %>%
@@ -255,7 +335,7 @@ labItemCounts        %>%
   Show()
 ```
 
-## Lab events with multiple units of measure
+### Lab events with multiple units of measure
 
 ```{r}
 multipleUnits <- 
@@ -274,93 +354,57 @@ multipleUnits  %>%
 write_xlsx(multipleUnits, "Lab-Event-Multiple-Units.xlsx")
 ```
 
-# Unit conversion issues
+View [Lab-Event-Multiple-Units.xlsx](Lab-Event-Multiple-Units.xlsx).
+
+### LOINCs with multiple itemids
 
 ```{r}
-targetItemID <- 50964    # Osmolality, Measured
-```
+LOINCwithMultipleItems <-
+  labItemCounts               %>% 
+  filter(!is.na(loinc_code))  %>%
+  group_by(loinc_code)        %>%
+  summarize(n        = n(),
+            nItemid  = n_distinct(itemid),
+            itemids  = str_flatten(unique(itemid), 
+                                 collapse=" | "))    %>%
+  ungroup()                                          %>%
+  filter(nItemid > 1)  
 
-```{r}
-targetLab <- 
-  factLabEvents                           %>%
-  inner_join(dimLabItems, by = "itemid")  %>%
-  select(-starts_with("row_id."))         %>%
-  
-  filter(itemid == targetItemID)          %>%
-  collect()
-  
-  
-nrow(targetLab)
-```
-
-```{r}
-targetLab    %>%
-  head(3)    %>%
-  collect()  %>%
+LOINCwithMultipleItems %>%
   Show()
 ```
 
 ```{r}
-targetLab                                                                 %>%
-  summarize(nNumber = sum( sapply(valuenum, FUN=is.numeric), na.rm=TRUE)) %>%
-  Show()
+write_xlsx(LOINCwithMultipleItems, "Lab-Event-LOINC-Multiple-itemids.xlsx")
 ```
 
-Eventually color by flag
-
-```{r}
-targetLab      %>%
-  count(flag)  %>%
-  Show()
-```
-
-
-```{r}
-counts <- table(targetLab$valueuom, useNA = "ifany")
-facetName <- paste0(names(counts), " [", counts, "]")
-facetName
-```
-
-```{r}
-variable_labeller <- function(variable, value)
-{
-  return(paste("Units = ", facetName[value]))
-}
-```
-
-```{r, fig.width=8, fig.height=6}
-ggplot(targetLab, aes(x = valuenum, y = ..density..))              +
-    geom_histogram(fill="cornsilk", color="grey80")                +
-    geom_density()                                                 +
-    xlim(0, quantile(targetLab$valuenum, 1.00, na.rm=TRUE))        +
-    labs(title=paste0("Lab Event: ", targetLab$label),
-         subtitle = paste0("Category: ", targetLab$category[1],
-                           ", Fluid: ",  targetLab$fluid[1],
-                           ", LOINC: ",  targetLab$loinc_code[1]),
-         x = targetLab$label,
-         caption=c(plotCaptionLeft, plotCaptionRight))             +
-    theme(plot.caption = element_text(hjust=c(0.0,1.0)))          
-```
-
-```{r, fig.width=8, fig.height=8}
-ggplot(targetLab, aes(x = valuenum, y = ..density..))              +
-    geom_histogram(fill="cornsilk", color="grey80")                +
-    geom_density()                                                 +
-    xlim(0, quantile(targetLab$valuenum, 1.00, na.rm=TRUE))        +
-    labs(title=paste0("Lab Event: ", targetLab$label),
-         subtitle = paste0("Category: ", targetLab$category[1],
-                           ", Fluid: ",  targetLab$fluid[1],
-                           ", LOINC: ",  targetLab$loinc_code[1]),
-         x = targetLab$label,
-         caption=c(plotCaptionLeft, plotCaptionRight))             +
-    theme(plot.caption = element_text(hjust=c(0.0,1.0)))           +
-    facet_wrap(~valueuom, 
-               nrow=length(counts),
-               labeller = as_labeller(variable_labeller))
-```
-
+View [Lab-Event-LOINC-Multiple-itemids.xlsx](Lab-Event-LOINC-Multiple-itemids.xlsx).
 
 **Close Database**
+
+# Discussion
+
+LOINC (Logical Observation Identifiers Names and Codes) is a way of standardizing clinical lab results.  The 2012 article by Swapna Abhyankar et al, "Standardizing clinical laboratory data for secondary use,"  explains the process developed using MIMIC-II, and carried forward to MIMIC-III:
+
+*We were able to map 87% of the unique laboratory tests that cover 94% of the total number of laboratory tests results. Of the 13% of tests that we could not map, nearly 60% were due to test names whose real meaning could not be discerned and 29% represented tests that were not yet included in the LOINC table. These results suggest that LOINC codes cover most of laboratory tests used in critical care.*
+
+# Conclusions
+
+Over 20 `itemid`s have 500,000 records or more. Nearly 60 have 100,000 or more.
+
+Categorizing all lab events by *category* and *fluid* is a useful breakdown.
+
+"Blood" is the largest *fluid* grouping containing nearly 92% of all lab events roughly split between *Chemistry* and *Hematology* categoires.
+
+*Urine* is the second largest *fluid* group but with about 7% of labe events.  The other 7 *fluid* groups are small.
+
+A number of lab events have missing units or multiple units of measure for the same `itemid`.  Before using these records, one should probably verify if they have roughly the same distribution as the values with majority specified units.
+
+Records with LOINCs with multiple `itemid`s should be explored to see if their distributions are roughly the same.
+
+At this point the value of the lab events without LOINCs is not clear.
+
+Exploration of the lab event value distributions might be interesting.
 
 ```{r, comment=NA}
 dbDisconnect(MimicDB)
