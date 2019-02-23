@@ -2,7 +2,7 @@
 
 The examples in this repository build on the information from the [MIMIC-III: Getting Started](https://github.com/EarlGlynn/MIMIC-III-Getting-Started) repository.
 
-PowerPoint slides are in the root directory in both .pptx and .pdf formats.
+PowerPoint slides are in the root directory in both .pptx and .pdf formats for a talk given at the [Kansas City R Users Group](https://www.meetup.com/Kansas-City-R-Users-Group/) on Feb. 9, 2019:  Exploring MIMIMC-III Critical Care Data Using Postgres/tidyverse/dbplyr/dplyr.
 
 ## Repository Directories
 
@@ -57,3 +57,16 @@ The MIMIC-III database schema can be [viewed online here](https://mit-lcp.github
 * Explore `chartevents` table with 330 million records and over 6400 types of chart events from two different `dbsource`s.
 
 * Explore event categories, parameter types, and units of measure.
+
+### labevents
+
+* The "first look" file identified data inconsistencies with `valueuom` (value unit of measure), and several fields in the lab items dimension.
+
+* The file Lab-Event-Multiple-Units.xlsx identifies `loinc_code`s and `itemid`s with multiple units of measure.
+
+* The file Lab-Event-Item-Counts.xlsx shows lab event counts by `loinc_code` and `itemid` along with the label and unit(s) of measure.
+
+* The file Lab-Event-Fluid-Category-Counts shows lab event counts by fluid (9 groups) and category (3 groups).
+
+
+
