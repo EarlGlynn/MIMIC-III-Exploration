@@ -17,14 +17,15 @@ div#TOC li {
 }
 </style>
 
-efg | 2019-02-16
-
+efg | 2019-04-21
 
 # Purpose
 
+Explore lab events to see if units of measure are consistent.
+
 # Background
 
-Swapna Abhyankar et al, [Standardizing clinical laboratory data for secondary use](https://www.sciencedirect.com/science/article/pii/S1532046412000652), *Jouornal of Biomedical Informatics*, 45(2012) 642-650.
+Swapna Abhyankar et al, [Standardizing clinical laboratory data for secondary use](https://www.sciencedirect.com/science/article/pii/S1532046412000652), *Journal of Biomedical Informatics*, 45(2012) 642-650.
 
 Online [info about the labevents table](https://mimic.physionet.org/mimictables/labevents/).  The [schema](https://mit-lcp.github.io/mimic-schema-spy/tables/labevents.html) shows the related tables.
 
@@ -99,7 +100,6 @@ MimicDB <- dbConnect(RPostgres::Postgres(),
 Database tables
 
 ```{r, comment=NA}
-
 factLabEvents <- tbl(MimicDB, in_schema("mimiciii", "labevents"))
 dimLabItems   <- tbl(MimicDB, in_schema("mimiciii", "d_labitems"))
 ```
@@ -107,6 +107,8 @@ dimLabItems   <- tbl(MimicDB, in_schema("mimiciii", "d_labitems"))
 ### Recoding to fix case duplicates
 
 With 32 GB of memory, let's bring tables into R memory tibbles for manipulation.
+
+Let's standardized case or spelling for these units.
 
 #### labevents
 
@@ -117,21 +119,22 @@ fixedLabEvents <-
   
   mutate(
           valueuom = recode(valueuom,
-                            "MEQ/L"   = "mEq/L",
-                            "MG/DL"   = "mg/dL",
-                            "MM HG"   = "mm Hg",
-                            "MOSM/KG" = "mOsm/kg",
-                            "ng/dl"   = "ng/dL",
-                            "NG/DL"   = "ng/dL",
-                            "ng/ml"   = "ng/mL",
-                            "nG/mL"   = "ng/mL",
-                            "nG/ML"   = "ng/mL",
-                            "RATIO"   = "Ratio",
-                            "SECONDS" = "sec",
-                            "uG/DL"   = "ug/dL",
-                            "ug/ml"   = "ug/mL",
-                            "UNITS"   = "units",
-                            .missing  = "<missing>"
+                            "MEQ/L"      = "mEq/L",
+                            "mg/24hours" = "mg/24hr",
+                            "MG/DL"      = "mg/dL",
+                            "MM HG"      = "mm Hg",
+                            "MOSM/KG"    = "mOsm/kg",
+                            "ng/dl"      = "ng/dL",
+                            "NG/DL"      = "ng/dL",
+                            "ng/ml"      = "ng/mL",
+                            "nG/mL"      = "ng/mL",
+                            "nG/ML"      = "ng/mL",
+                            "RATIO"      = "Ratio",
+                            "SECONDS"    = "sec",
+                            "uG/DL"      = "ug/dL",
+                            "ug/ml"      = "ug/mL",
+                            "UNITS"      = "units",
+                            .missing     = "<missing>"
                            )
         ) 
 
@@ -196,7 +199,7 @@ A number of lab events are missing LOINC values.
   Show(bigMark = ",")
 ```
 
-For now, let's create additional summaries below, but be aware that one of the "distinct" LOINC values is likely a missing value.
+For now, let's create additional summaries, but be aware that one of the "distinct" LOINC values is likely a missing value.
 
 ## Category Summary
 
@@ -226,14 +229,14 @@ fluidSummary <-
   inner_join(fixedLabItems, by = "itemid")        %>%
   
   group_by(fluid)                                %>%
-  summarize(n      = n(),                     
+  summarize(n         = n(),                     
             nCategory = n_distinct(category),
             nLOINC    = n_distinct(loinc_code),
             nLabel    = n_distinct(label))       %>%
   ungroup()
 
 fluidSummary   %>%
- Show(bigMark = ",")
+  Show(bigMark = ",")
 ```
 
 ## Fluid-Category Combinations
@@ -277,7 +280,7 @@ View [Lab-Event-Fluid-Category-Counts.xlsx](Lab-Event-Fluid-Category-Counts.xlsx
 
 itemid is unique.  loinc_code and label are not.
 
-Some LOINCs have multiple units of measure.
+### Units of measure
 
 ```{r, comment=NA}
 labItemCounts <- 
@@ -285,17 +288,31 @@ labItemCounts <-
   inner_join(fixedLabItems, by = "itemid")           %>%
   
   group_by(loinc_code, itemid, label)                %>%
-  summarize(n        = n(),
-            nUnits   = n_distinct(valueuom),
-            Units    = str_flatten(unique(valueuom), 
-                                 collapse="|"))      %>%
+  summarize(n             = n(),
+            nNumeric      = sum(  grepl("^-?[0-9.]+$", value)),
+            nCharacter    = sum( !grepl("^-?[0-9.]+$", value)),
+            nMissing      = sum(valueuom == "<missing>"),
+            nUnits        = n_distinct(valueuom),
+            Units         = str_flatten(sort(unique(valueuom)), 
+                                        collapse="|"))      %>%
   ungroup()                                          %>%
   
   arrange(loinc_code, itemid)                        %>%
-  select(n, everything())                            %>%  
+  select(n, nNumeric, nCharacter, nMissing, 
+         everything())                               %>%  
   collect()
   
 nrow(labItemCounts)
+```
+
+Let's remove "|<missing>" or "<missing>|" from units, since <missing> mixed with some other units.
+
+```{r}
+missingUnitsCounts <- as.integer(grepl("\\|<missing>|<missing>\\|", labItemCounts$Units))
+
+labItemCounts$nUnits <- labItemCounts$nUnits - missingUnitsCounts
+
+labItemCounts$Units <- gsub("\\|<missing>|<missing>\\|", "", labItemCounts$Units)
 ```
 
 Most of the items in the dimension table were referenced.
@@ -394,11 +411,11 @@ Over 20 `itemid`s have 500,000 records or more. Nearly 60 have 100,000 or more.
 
 Categorizing all lab events by *category* and *fluid* is a useful breakdown.
 
-"Blood" is the largest *fluid* grouping containing nearly 92% of all lab events roughly split between *Chemistry* and *Hematology* categoires.
+"Blood" is the largest *fluid* grouping containing nearly 92% of all lab events roughly split between *Chemistry* and *Hematology* categories.
 
-*Urine* is the second largest *fluid* group but with about 7% of labe events.  The other 7 *fluid* groups are small.
+*Urine* is the second largest *fluid* group but with about 7% of lab events.  The other 7 *fluid* groups are small.
 
-A number of lab events have missing units or multiple units of measure for the same `itemid`.  Before using these records, one should probably verify if they have roughly the same distribution as the values with majority specified units.
+A number of lab events have missing units or multiple units of measure for the same `itemid`.  Before using these records, one should probably verify if they have roughly the same distribution as the values with majority specified units.  For many lab events the number of missing values is small enough to simply ignore such cases.
 
 Records with LOINCs with multiple `itemid`s should be explored to see if their distributions are roughly the same.
 
