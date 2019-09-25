@@ -2,7 +2,11 @@
 
 The examples in this repository build on the information from the [MIMIC-III: Getting Started](https://github.com/EarlGlynn/MIMIC-III-Getting-Started) repository.
 
-PowerPoint slides are in the root directory in both .pptx and .pdf formats for a talk given at the [Kansas City R Users Group](https://www.meetup.com/Kansas-City-R-Users-Group/) on Feb. 9, 2019:  Exploring MIMIMC-III Critical Care Data Using Postgres/tidyverse/dbplyr/dplyr.
+PowerPoint slides are in the root directory in both .pptx and .pdf formats for two talks:
+
+* KU Med Frontier's Informatics Meetup on 2019-09-26:  MIMIC III: A free publicly available EHR Database for Research
+
+* [Kansas City R Users Group](https://www.meetup.com/Kansas-City-R-Users-Group/) on 2019-02-09:  Exploring MIMIMC-III Critical Care Data Using Postgres/tidyverse/dbplyr/dplyr.
 
 ## Repository Directories
 
